@@ -6,25 +6,26 @@ from comunicacion import Comunicacion
 
 
 class Cliente:
-    def __init__(self, hoja_nombre):
+    def __init__(self, usuario, hoja_nombre):
         ruta_config = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'fixtures/config.json'))
         with open(ruta_config, "r") as file:
             config = json.load(file)
             self.host = config["host"]
             self.port = config["port"]
 
+        self.usuario = usuario
         self.hoja_nombre = hoja_nombre
         self.comunicacion = Comunicacion(self.host, self.port)
 
     def conectar_servidor(self):
         self.comunicacion.conectar()
-        self.comunicacion.enviar_datos(self.hoja_nombre)
+        self.comunicacion.enviar_datos(f"{self.usuario},{self.hoja_nombre}")
 
     def cerrar_conexion(self):
         self.comunicacion.cerrar_conexion()
 
     def actualizar_celda(self, fila, columna, valor):
-        mensaje = f"{fila},{columna},{valor}"
+        mensaje = f"{self.usuario},{fila},{columna},{valor}"
         self.comunicacion.enviar_datos(mensaje)
 
     def iniciar_interaccion(self):
@@ -42,9 +43,9 @@ class Cliente:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Uso: python3 cliente.py <nombre_hoja_calculo>")
+    if len(sys.argv) != 3:
+        print("Uso: python3 cliente.py <usuario> <nombre_hoja_calculo>")
     else:
-        cliente = Cliente(sys.argv[1])
+        cliente = Cliente(sys.argv[1], sys.argv[2])
         cliente.conectar_servidor()
         cliente.iniciar_interaccion()

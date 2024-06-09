@@ -23,7 +23,9 @@ class Servidor:
         print(f"Conexión establecida con {cliente_address}")
         self.clientes.append((cliente_socket, cliente_address))
 
-        hoja_nombre = cliente_socket.recv(4096).decode()
+        datos_iniciales = cliente_socket.recv(4096).decode()
+        usuario, hoja_nombre = datos_iniciales.split(",")
+        print(f"Usuario conectado: {usuario}")
         print(f"Nombre de hoja de cálculo recibido: {hoja_nombre}")
 
         if hoja_nombre not in self.hojas_calculo:
@@ -35,14 +37,15 @@ class Servidor:
                 break
 
             parts = data.split(",")
-            if len(parts) != 3:
+            if len(parts) != 4:
                 print("Error: El formato de los datos no es válido.")
                 continue
 
-            fila, columna = map(int, parts[:2])
-            valor = parts[2]
+            usuario, fila, columna = parts[:3]
+            fila, columna = map(int, [fila, columna])
+            valor = parts[3]
 
-            self.hojas_calculo[hoja_nombre][(fila, columna)] = valor
+            self.hojas_calculo[hoja_nombre][(fila, columna)] = f"{valor}({usuario})"
 
             self.guardar_en_csv(hoja_nombre)
 
