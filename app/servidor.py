@@ -8,10 +8,13 @@ from threading import Thread
 class Servidor:
     def __init__(self):
         ruta_config = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'fixtures/config.json'))
-        with open(ruta_config, "r") as file:
+        file = open(ruta_config, "r")
+        try:
             config = json.load(file)
             self.host = config["host"]
             self.port = config["port"]
+        finally:
+            file.close()
 
         self.clientes = []
         self.hojas_calculo = {}
@@ -62,28 +65,37 @@ class Servidor:
             os.path.join(os.path.dirname(__file__), 'hojas_de_calculo', f"{hoja_nombre}.csv"))
 
         if os.path.exists(ruta_archivo):
-            with open(ruta_archivo, "r", newline='') as file:
+            file = open(ruta_archivo, "r", newline='')
+            try:
                 reader = csv.reader(file)
                 for fila in reader:
                     datos_fila = ','.join(fila)
                     cliente_socket.sendall(f"{datos_fila}\n".encode())
+            finally:
+                file.close()
 
         else:
-            with open(ruta_archivo, "w", newline=''):
+            file = open(ruta_archivo, "w", newline='')
+            try:
                 cliente_socket.sendall("Se creó la hoja de cálculo\n".encode())
-
+            finally:
+                file.close()
         cliente_socket.shutdown(socket.SHUT_WR)
 
     def cargar_csv(self, hoja_nombre):
         ruta_archivo = os.path.abspath(
             os.path.join(os.path.dirname(__file__), 'hojas_de_calculo', f"{hoja_nombre}.csv"))
         if os.path.exists(ruta_archivo):
-            with open(ruta_archivo, "r", newline='') as file:
+            file = open(ruta_archivo, "r", newline='')
+            try:
                 reader = csv.reader(file)
                 for fila_idx, fila in enumerate(reader, start=1):
                     for col_idx, valor in enumerate(fila, start=1):
                         if valor:
                             self.hojas_calculo.setdefault(hoja_nombre, {})[(fila_idx, col_idx)] = valor
+
+            finally:
+                file.close()
 
     def guardar_en_csv(self, hoja_nombre):
         # Obtener las filas y columnas máximas para determinar el tamaño de la hoja de cálculo
@@ -94,12 +106,16 @@ class Servidor:
         # Escribir los datos de la hoja de cálculo en el archivo CSV
         ruta_csv = os.path.abspath(
             os.path.join(os.path.dirname(__file__), 'hojas_de_calculo', f"{hoja_nombre}.csv"))
-        with open(ruta_csv, "w", newline='') as file:
+        file = open(ruta_csv, "w", newline='')
+        try:
             writer = csv.writer(file)
             for fila in range(1, filas_max + 1):
                 fila_datos = [self.hojas_calculo[hoja_nombre].get((fila, columna), "") for columna in
                               range(1, columnas_max + 1)]
                 writer.writerow(fila_datos)
+
+        finally:
+            file.close()
 
     def iniciar(self):
         self.socket_servidor.listen(5)

@@ -8,10 +8,13 @@ from comunicacion import Comunicacion
 class Cliente:
     def __init__(self, usuario, hoja_nombre):
         ruta_config = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'fixtures/config.json'))
-        with open(ruta_config, "r") as file:
+        file = open(ruta_config, "r")
+        try:
             config = json.load(file)
             self.host = config["host"]
             self.port = config["port"]
+        finally:
+            file.close()
 
         self.usuario = usuario
         self.hoja_nombre = hoja_nombre
