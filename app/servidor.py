@@ -28,6 +28,10 @@ class Servidor:
         print(f"Usuario conectado: {usuario}")
         print(f"Nombre de hoja de cálculo recibido: {hoja_nombre}")
 
+        self.cargar_csv(hoja_nombre)
+
+        self.enviar_contenido_csv(cliente_socket, hoja_nombre)
+
         if hoja_nombre not in self.hojas_calculo:
             self.hojas_calculo[hoja_nombre] = {}
 
@@ -53,6 +57,34 @@ class Servidor:
         self.clientes.remove((cliente_socket, cliente_address))
         print(f"Conexión cerrada con {cliente_address}")
 
+    def enviar_contenido_csv(self, cliente_socket, hoja_nombre):
+        ruta_archivo = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), 'hojas_de_calculo', f"{hoja_nombre}.csv"))
+
+        if os.path.exists(ruta_archivo):
+            with open(ruta_archivo, "r", newline='') as file:
+                reader = csv.reader(file)
+                for fila in reader:
+                    datos_fila = ','.join(fila)
+                    cliente_socket.sendall(f"{datos_fila}\n".encode())
+
+        else:
+            with open(ruta_archivo, "w", newline=''):
+                cliente_socket.sendall("Se creó la hoja de cálculo\n".encode())
+
+        cliente_socket.shutdown(socket.SHUT_WR)
+
+    def cargar_csv(self, hoja_nombre):
+        ruta_archivo = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), 'hojas_de_calculo', f"{hoja_nombre}.csv"))
+        if os.path.exists(ruta_archivo):
+            with open(ruta_archivo, "r", newline='') as file:
+                reader = csv.reader(file)
+                for fila_idx, fila in enumerate(reader, start=1):
+                    for col_idx, valor in enumerate(fila, start=1):
+                        if valor:
+                            self.hojas_calculo.setdefault(hoja_nombre, {})[(fila_idx, col_idx)] = valor
+
     def guardar_en_csv(self, hoja_nombre):
         # Obtener las filas y columnas máximas para determinar el tamaño de la hoja de cálculo
         filas_max = max(fila for fila, _ in self.hojas_calculo[hoja_nombre]) if self.hojas_calculo[hoja_nombre] else 0
@@ -61,7 +93,7 @@ class Servidor:
 
         # Escribir los datos de la hoja de cálculo en el archivo CSV
         ruta_csv = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), '..', 'hojas_de_calculo', f"{hoja_nombre}.csv"))
+            os.path.join(os.path.dirname(__file__), 'hojas_de_calculo', f"{hoja_nombre}.csv"))
         with open(ruta_csv, "w", newline='') as file:
             writer = csv.writer(file)
             for fila in range(1, filas_max + 1):
