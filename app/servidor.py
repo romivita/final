@@ -1,8 +1,10 @@
 import csv
 import json
 import os
+import queue
 import socket
-from threading import Thread
+import time
+from threading import Thread, Lock
 
 
 class Servidor:
@@ -18,6 +20,9 @@ class Servidor:
 
         self.clientes = []
         self.hojas_calculo = {}
+        self.lock = Lock()
+        # TODO set maxsize
+        self.queue = queue.Queue()
 
         self.socket_servidor = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket_servidor.bind((self.host, self.port))
@@ -41,20 +46,30 @@ class Servidor:
         while True:
             data = cliente_socket.recv(4096).decode()
             if not data:
+                time.sleep(0.05)
                 break
+            else:
+                print(f"Datos recibidos: {data}")
 
-            parts = data.split(",")
-            if len(parts) != 4:
-                print("Error: El formato de los datos no es válido.")
-                continue
+            registros = data.strip().split("\n")
+            for registro in registros:
+                if not registro.strip():
+                    continue
+                parts = registro.split(",")
+                if len(parts) != 4:
+                    print("Error: El formato de los datos no es válido.")
+                    continue
 
-            usuario, fila, columna = parts[:3]
-            fila, columna = map(int, [fila, columna])
-            valor = parts[3]
+                usuario, fila, columna, valor = parts
+                fila, columna = int(fila), int(columna)
 
-            self.hojas_calculo[hoja_nombre][(fila, columna)] = f"{valor}({usuario})"
-
-            self.guardar_en_csv(hoja_nombre)
+                if self.lock.locked():
+                    print(f"{valor} a la cola")
+                    self.queue.put((hoja_nombre, fila, columna, valor, usuario))
+                else:
+                    print(f"{usuario} guarda en CSV directamente")
+                    self.hojas_calculo[hoja_nombre][(fila, columna)] = f"{valor}({usuario})"
+                    self.guardar_en_csv(hoja_nombre, usuario)
 
         cliente_socket.close()
         self.clientes.remove((cliente_socket, cliente_address))
@@ -73,7 +88,6 @@ class Servidor:
                     cliente_socket.sendall(f"{datos_fila}\n".encode())
             finally:
                 file.close()
-
         else:
             file = open(ruta_archivo, "w", newline='')
             try:
@@ -93,29 +107,42 @@ class Servidor:
                     for col_idx, valor in enumerate(fila, start=1):
                         if valor:
                             self.hojas_calculo.setdefault(hoja_nombre, {})[(fila_idx, col_idx)] = valor
-
             finally:
                 file.close()
 
-    def guardar_en_csv(self, hoja_nombre):
-        # Obtener las filas y columnas máximas para determinar el tamaño de la hoja de cálculo
-        filas_max = max(fila for fila, _ in self.hojas_calculo[hoja_nombre]) if self.hojas_calculo[hoja_nombre] else 0
-        columnas_max = max(columna for _, columna in self.hojas_calculo[hoja_nombre]) if self.hojas_calculo[
-            hoja_nombre] else 0
-
-        # Escribir los datos de la hoja de cálculo en el archivo CSV
-        ruta_csv = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), 'hojas_de_calculo', f"{hoja_nombre}.csv"))
-        file = open(ruta_csv, "w", newline='')
+    def guardar_en_csv(self, hoja_nombre, usuario):
+        print(f"{usuario} pide el lock")
+        self.lock.acquire()
+        print(f"{usuario} tiene el lock")
         try:
-            writer = csv.writer(file)
-            for fila in range(1, filas_max + 1):
-                fila_datos = [self.hojas_calculo[hoja_nombre].get((fila, columna), "") for columna in
-                              range(1, columnas_max + 1)]
-                writer.writerow(fila_datos)
+            while not self.queue.empty():
+                hoja_nombre, fila, columna, valor, usuario = self.queue.get()
+                self.hojas_calculo[hoja_nombre][(fila, columna)] = f"{valor}({usuario})"
 
+            # Obtener las filas y columnas máximas para determinar el tamaño de la hoja de cálculo
+            filas_max = max(fila for fila, _ in self.hojas_calculo[hoja_nombre]) if self.hojas_calculo[
+                hoja_nombre] else 0
+            columnas_max = max(columna for _, columna in self.hojas_calculo[hoja_nombre]) if self.hojas_calculo[
+                hoja_nombre] else 0
+
+            # Escribir los datos de la hoja de cálculo en el archivo CSV
+            ruta_csv = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), 'hojas_de_calculo', f"{hoja_nombre}.csv"))
+            file = open(ruta_csv, "w", newline='')
+            try:
+                # TODO REMOVE Testing purpose
+                time.sleep(10)
+                writer = csv.writer(file)
+                for fila in range(1, filas_max + 1):
+                    fila_datos = [self.hojas_calculo[hoja_nombre].get((fila, columna), "") for columna in
+                                  range(1, columnas_max + 1)]
+                    print(f"Escribiendo fila en CSV: {fila_datos}")
+                    writer.writerow(fila_datos)
+            finally:
+                file.close()
         finally:
-            file.close()
+            self.lock.release()
+            print(f"{usuario} libera el lock")
 
     def iniciar(self):
         self.socket_servidor.listen(5)

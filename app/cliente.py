@@ -37,17 +37,17 @@ class Cliente:
         self.comunicacion.cerrar_conexion()
 
     def actualizar_celda(self, fila, columna, valor):
-        mensaje = f"{self.usuario},{fila},{columna},{valor}"
+        mensaje = f"{self.usuario},{fila},{columna},{valor}\n"
         self.comunicacion.enviar_datos(mensaje)
 
     def iniciar_interaccion(self):
         try:
             while True:
                 fila = int(input("Ingrese número de fila: "))
-                columna = int(input("Ingrese número de columna: "))
+                # columna = int(input("Ingrese número de columna: "))
                 valor = input("Ingrese el valor: ")
 
-                self.actualizar_celda(fila, columna, valor)
+                self.actualizar_celda(fila, 1, valor)
         except KeyboardInterrupt:
             print("Cerrando conexión...")
         finally:
