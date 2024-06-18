@@ -37,7 +37,7 @@ class Cliente:
         self.comunicacion.cerrar_conexion()
 
     def actualizar_celda(self, fila, columna, valor):
-        mensaje = f"{self.usuario},{fila},{columna},{valor}\n"
+        mensaje = f"{self.usuario},{fila},{columna},{valor}"
         self.comunicacion.enviar_datos(mensaje)
 
     def iniciar_interaccion(self):
