@@ -1,5 +1,6 @@
 import json
 import os
+import random
 import sys
 
 from comunicacion import Comunicacion
@@ -43,11 +44,11 @@ class Cliente:
     def iniciar_interaccion(self):
         try:
             while True:
-                fila = int(input("Ingrese número de fila: "))
-                # columna = int(input("Ingrese número de columna: "))
+                fila = random.randint(1, 5)
+                columna = random.randint(1, 5)
                 valor = input("Ingrese el valor: ")
 
-                self.actualizar_celda(fila, 1, valor)
+                self.actualizar_celda(fila, columna, valor)
         except KeyboardInterrupt:
             print("Cerrando conexión...")
         finally:

@@ -2,7 +2,6 @@ import csv
 import json
 import os
 import socket
-import time
 from queue import Queue
 from threading import Thread
 
@@ -34,11 +33,12 @@ class Servidor:
     def procesar_cola(self):
         while True:
             hoja_nombre, fila, columna, valor = self.cola.get()
-            print(f"{valor} procesando cola")
+            print(f'Cola get valor: {valor}')
             if hoja_nombre not in self.hojas_calculo:
                 self.hojas_calculo[hoja_nombre] = {}
             self.hojas_calculo[hoja_nombre][(fila, columna)] = valor
             self.guardar_en_csv(hoja_nombre)
+            print(f'Cola task done valor: {valor}')
             self.cola.task_done()
 
     def manejar_cliente(self, cliente_socket, cliente_address):
@@ -125,8 +125,6 @@ class Servidor:
         ruta_csv = os.path.abspath(os.path.join(os.path.dirname(__file__), 'hojas_de_calculo', f"{hoja_nombre}.csv"))
         file = open(ruta_csv, "w", newline='')
         try:
-            # TODO REMOVE Testing purpose
-            time.sleep(10)
             writer = csv.writer(file)
             for fila in range(1, filas_max + 1):
                 fila_datos = [self.hojas_calculo[hoja_nombre].get((fila, columna), "") for columna in
