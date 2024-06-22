@@ -24,15 +24,6 @@ class Cliente:
     def conectar_servidor(self):
         self.comunicacion.conectar()
         self.comunicacion.enviar_datos(f"{self.usuario},{self.hoja_nombre}")
-        self.mostrar_contenido_inicial()
-
-    def mostrar_contenido_inicial(self):
-        print("Contenido inicial:")
-        while True:
-            data = self.comunicacion.recibir_datos().strip()
-            if not data:
-                break
-            print(data)
 
     def cerrar_conexion(self):
         self.comunicacion.cerrar_conexion()
@@ -44,8 +35,8 @@ class Cliente:
     def iniciar_interaccion(self):
         try:
             while True:
-                fila = random.randint(1, 5)
-                columna = random.randint(1, 5)
+                fila = random.randint(1, 3)
+                columna = random.randint(1, 3)
                 valor = input("Ingrese el valor: ")
 
                 self.actualizar_celda(fila, columna, valor)

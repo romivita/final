@@ -18,7 +18,7 @@ class Servidor:
             file.close()
 
         self.clientes = []
-        self.hojas_calculo = {}
+        self.hojas_de_calculo_dict = {}
         self.cola = Queue(maxsize=100)
 
         self.socket_servidor = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -34,24 +34,23 @@ class Servidor:
         while True:
             hoja_nombre, fila, columna, valor = self.cola.get()
             print(f'Cola get valor: {valor}')
-            if hoja_nombre not in self.hojas_calculo:
-                self.hojas_calculo[hoja_nombre] = {}
-            self.hojas_calculo[hoja_nombre][(fila, columna)] = valor
+            if hoja_nombre not in self.hojas_de_calculo_dict:
+                self.hojas_de_calculo_dict[hoja_nombre] = {}
+            self.hojas_de_calculo_dict[hoja_nombre][(fila, columna)] = valor
             self.guardar_en_csv(hoja_nombre)
             print(f'Cola task done valor: {valor}')
             self.cola.task_done()
 
-    def manejar_cliente(self, cliente_socket, cliente_address):
+    def gestionar_cliente(self, cliente_socket, cliente_address):
         print(f"Conexión establecida con {cliente_address}")
         self.clientes.append((cliente_socket, cliente_address))
 
-        datos_iniciales = cliente_socket.recv(4096).decode()
-        usuario, hoja_nombre = datos_iniciales.split(",")
+        cli_args = cliente_socket.recv(4096).decode()
+        usuario, hoja_nombre = cli_args.split(",")
         print(f"Usuario conectado: {usuario}")
         print(f"Nombre de hoja de cálculo recibido: {hoja_nombre}")
 
-        self.cargar_csv(hoja_nombre)
-        self.enviar_contenido_csv(cliente_socket, hoja_nombre)
+        self.importar_csv_a_dict(hoja_nombre)
 
         while True:
             data = cliente_socket.recv(4096).decode()
@@ -75,28 +74,7 @@ class Servidor:
         self.clientes.remove((cliente_socket, cliente_address))
         print(f"Conexión cerrada con {cliente_address}")
 
-    def enviar_contenido_csv(self, cliente_socket, hoja_nombre):
-        ruta_archivo = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), 'hojas_de_calculo', f"{hoja_nombre}.csv"))
-
-        if os.path.exists(ruta_archivo):
-            file = open(ruta_archivo, "r", newline='')
-            try:
-                reader = csv.reader(file)
-                for fila in reader:
-                    datos_fila = ','.join(fila)
-                    cliente_socket.sendall(f"{datos_fila}\n".encode())
-            finally:
-                file.close()
-        else:
-            file = open(ruta_archivo, "w", newline='')
-            try:
-                cliente_socket.sendall("Se creó la hoja de cálculo\n".encode())
-            finally:
-                file.close()
-        cliente_socket.shutdown(socket.SHUT_WR)
-
-    def cargar_csv(self, hoja_nombre):
+    def importar_csv_a_dict(self, hoja_nombre):
         ruta_archivo = os.path.abspath(
             os.path.join(os.path.dirname(__file__), 'hojas_de_calculo', f"{hoja_nombre}.csv"))
         if os.path.exists(ruta_archivo):
@@ -106,20 +84,21 @@ class Servidor:
                 for fila_idx, fila in enumerate(reader, start=1):
                     for col_idx, valor in enumerate(fila, start=1):
                         if valor:
-                            if hoja_nombre not in self.hojas_calculo:
-                                self.hojas_calculo[hoja_nombre] = {}
-                            self.hojas_calculo[hoja_nombre][(fila_idx, col_idx)] = valor
+                            if hoja_nombre not in self.hojas_de_calculo_dict:
+                                self.hojas_de_calculo_dict[hoja_nombre] = {}
+                            self.hojas_de_calculo_dict[hoja_nombre][(fila_idx, col_idx)] = valor
             finally:
                 file.close()
 
     def guardar_en_csv(self, hoja_nombre):
-        if hoja_nombre not in self.hojas_calculo:
+        if hoja_nombre not in self.hojas_de_calculo_dict:
             return
 
         # Obtener las filas y columnas máximas para determinar el tamaño de la hoja de cálculo
-        filas_max = max(fila for fila, _ in self.hojas_calculo[hoja_nombre]) if self.hojas_calculo[hoja_nombre] else 0
-        columnas_max = max(columna for _, columna in self.hojas_calculo[hoja_nombre]) if self.hojas_calculo[
+        filas_max = max(fila for fila, _ in self.hojas_de_calculo_dict[hoja_nombre]) if self.hojas_de_calculo_dict[
             hoja_nombre] else 0
+        columnas_max = max(columna for _, columna in self.hojas_de_calculo_dict[hoja_nombre]) if \
+            self.hojas_de_calculo_dict[hoja_nombre] else 0
 
         # Escribir los datos de la hoja de cálculo en el archivo CSV
         ruta_csv = os.path.abspath(os.path.join(os.path.dirname(__file__), 'hojas_de_calculo', f"{hoja_nombre}.csv"))
@@ -127,9 +106,9 @@ class Servidor:
         try:
             writer = csv.writer(file)
             for fila in range(1, filas_max + 1):
-                fila_datos = [self.hojas_calculo[hoja_nombre].get((fila, columna), "") for columna in
+                fila_datos = [self.hojas_de_calculo_dict[hoja_nombre].get((fila, columna), "") for columna in
                               range(1, columnas_max + 1)]
-                print(f"Escribiendo fila en CSV: {fila_datos}")
+                print(f"Escribiendo en CSV: {fila_datos}")
                 writer.writerow(fila_datos)
         finally:
             file.close()
@@ -140,7 +119,7 @@ class Servidor:
 
         while True:
             cliente_socket, cliente_address = self.socket_servidor.accept()
-            cliente_thread = Thread(target=self.manejar_cliente, args=(cliente_socket, cliente_address))
+            cliente_thread = Thread(target=self.gestionar_cliente, args=(cliente_socket, cliente_address))
             cliente_thread.start()
 
 
