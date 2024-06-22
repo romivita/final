@@ -3,7 +3,7 @@ import json
 import os
 import socket
 from queue import Queue
-from threading import Thread
+from threading import Thread, Lock
 
 
 class Servidor:
@@ -20,15 +20,18 @@ class Servidor:
         self.clientes = []
         self.hojas_de_calculo_dict = {}
         self.cola = Queue(maxsize=100)
+        self.lock = Lock()
 
         self.socket_servidor = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket_servidor.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        # To manipulate options at the sockets API level, level is specified as SOL_SOCKET
-        # the SO_REUSEADDR flag tells the kernel to reuse a local socket in TIME_WAIT state, without waiting for its natural timeout to expire.
         self.socket_servidor.bind((self.host, self.port))
 
         self.escritor_thread = Thread(target=self.procesar_cola)
         self.escritor_thread.start()
+
+    def inicializar_hoja(self, hoja_nombre):
+        if hoja_nombre not in self.hojas_de_calculo_dict:
+            self.hojas_de_calculo_dict[hoja_nombre] = {(1, 1): ""}
 
     def procesar_cola(self):
         while True:
@@ -39,6 +42,7 @@ class Servidor:
             self.hojas_de_calculo_dict[hoja_nombre][(fila, columna)] = valor
             self.guardar_en_csv(hoja_nombre)
             print(f'Cola task done valor: {valor}')
+            self.notificar_clientes(hoja_nombre, fila, columna, valor)
             self.cola.task_done()
 
     def gestionar_cliente(self, cliente_socket, cliente_address):
@@ -50,7 +54,9 @@ class Servidor:
         print(f"Usuario conectado: {usuario}")
         print(f"Nombre de hoja de cálculo recibido: {hoja_nombre}")
 
+        self.inicializar_hoja(hoja_nombre)
         self.importar_csv_a_dict(hoja_nombre)
+        self.enviar_hoja_completa(cliente_socket, hoja_nombre)
 
         while True:
             data = cliente_socket.recv(4096).decode()
@@ -112,6 +118,31 @@ class Servidor:
                 writer.writerow(fila_datos)
         finally:
             file.close()
+
+    def enviar_hoja_completa(self, cliente_socket, hoja_nombre):
+        self.lock.acquire()
+        try:
+            hoja = self.hojas_de_calculo_dict.get(hoja_nombre, {})
+            filas_max = max(fila for fila, _ in hoja) if hoja else 0
+            columnas_max = max(columna for _, columna in hoja) if hoja else 0
+
+            datos = []
+            for fila in range(1, filas_max + 1):
+                fila_datos = [hoja.get((fila, columna), "") for columna in range(1, columnas_max + 1)]
+                datos.append(fila_datos)
+        finally:
+            self.lock.release()
+
+        cliente_socket.sendall(json.dumps(datos).encode())
+
+    def notificar_clientes(self, hoja_nombre, fila, columna, valor):
+        mensaje = json.dumps({"hoja_nombre": hoja_nombre, "fila": fila, "columna": columna, "valor": valor})
+
+        for cliente_socket, _ in self.clientes:
+            try:
+                cliente_socket.sendall(mensaje.encode())
+            except Exception as e:
+                print(f"Error notificando al cliente: {e}")
 
     def iniciar(self):
         self.socket_servidor.listen(5)
