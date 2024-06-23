@@ -5,6 +5,8 @@ import socket
 from queue import Queue
 from threading import Thread, Lock
 
+from utils import celda_a_indices
+
 
 class Servidor:
     def __init__(self):
@@ -35,14 +37,15 @@ class Servidor:
 
     def procesar_cola(self):
         while True:
-            hoja_nombre, fila, columna, valor = self.cola.get()
+            hoja_nombre, celda, valor = self.cola.get()
+            fila, columna = celda_a_indices(celda)
             print(f'Cola get valor: {valor}')
             if hoja_nombre not in self.hojas_de_calculo_dict:
                 self.hojas_de_calculo_dict[hoja_nombre] = {}
             self.hojas_de_calculo_dict[hoja_nombre][(fila, columna)] = valor
             self.guardar_en_csv(hoja_nombre)
             print(f'Cola task done valor: {valor}')
-            self.notificar_clientes(hoja_nombre, fila, columna, valor)
+            self.notificar_clientes(hoja_nombre, celda, valor)
             self.cola.task_done()
 
     def gestionar_cliente(self, cliente_socket, cliente_address):
@@ -66,15 +69,14 @@ class Servidor:
                 print(f"Datos recibidos: {data}")
 
             parts = data.split(",")
-            if len(parts) != 4:
+            if len(parts) != 3:
                 print("Error: El formato de los datos no es válido.")
                 continue
 
-            usuario, fila, columna = parts[:3]
-            fila, columna = map(int, [fila, columna])
-            valor = f"{parts[3]}({usuario})"
+            usuario, celda, valor = parts
+            valor = f"{valor}({usuario})"
 
-            self.cola.put((hoja_nombre, fila, columna, valor))
+            self.cola.put((hoja_nombre, celda, valor))
 
         cliente_socket.close()
         self.clientes.remove((cliente_socket, cliente_address))
@@ -135,8 +137,8 @@ class Servidor:
 
         cliente_socket.sendall(json.dumps(datos).encode())
 
-    def notificar_clientes(self, hoja_nombre, fila, columna, valor):
-        mensaje = json.dumps({"hoja_nombre": hoja_nombre, "fila": fila, "columna": columna, "valor": valor})
+    def notificar_clientes(self, hoja_nombre, celda, valor):
+        mensaje = json.dumps({"hoja_nombre": hoja_nombre, "celda": celda, "valor": valor})
 
         for cliente_socket, _ in self.clientes:
             try:

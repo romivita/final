@@ -5,29 +5,7 @@ import sys
 from threading import Thread
 
 from comunicacion import Comunicacion
-
-
-def letra_a_indice(letra):
-    """Convierte una letra de columna a un índice numérico (A=1, B=2, ...)"""
-    return ord(letra.upper()) - ord('A') + 1
-
-
-def indice_a_letra(indice):
-    """Convierte un índice numérico a una letra de columna (1=A, 2=B, ...)"""
-    return chr(indice + ord('A') - 1)
-
-
-def celda_a_indices(celda):
-    """Convierte una referencia de celda (p.ej., 'A1') a índices de fila y columna (p.ej., (1, 1))"""
-    columna = letra_a_indice(celda[0])
-    fila = int(celda[1:])
-    return fila, columna
-
-
-def indices_a_celda(fila, columna):
-    """Convierte índices de fila y columna a una referencia de celda (p.ej., (1, 1) a 'A1')"""
-    letra_columna = indice_a_letra(columna)
-    return f"{letra_columna}{fila}"
+from utils import celda_a_indices, indices_a_celda
 
 
 class Cliente:
@@ -68,8 +46,7 @@ class Cliente:
         self.comunicacion.cerrar_conexion()
 
     def actualizar_celda(self, celda, valor):
-        fila, columna = celda_a_indices(celda)
-        mensaje = f"{self.usuario},{fila},{columna},{valor}"
+        mensaje = f"{self.usuario},{celda},{valor}"
         self.comunicacion.enviar_datos(mensaje)
 
     def recibir_actualizaciones(self):
@@ -78,11 +55,11 @@ class Cliente:
                 datos = self.comunicacion.recibir_datos()
                 actualizacion = json.loads(datos)
                 hoja_nombre = actualizacion["hoja_nombre"]
-                fila = actualizacion["fila"]
-                columna = actualizacion["columna"]
+                celda = actualizacion["celda"]
                 valor = actualizacion["valor"]
 
                 if hoja_nombre == self.hoja_nombre:
+                    fila, columna = celda_a_indices(celda)
                     while len(self.hoja_de_calculo) < fila:
                         self.hoja_de_calculo.append([""] * len(self.hoja_de_calculo[0]))
 
@@ -91,7 +68,6 @@ class Cliente:
                             fila_datos.append("")
 
                     self.hoja_de_calculo[fila - 1][columna - 1] = valor
-                    celda = indices_a_celda(fila, columna)
                     print(f"\n>>>Actualización recibida: {celda} {valor}")
             except Exception as e:
                 print(f"Error recibiendo actualización: {e}")
