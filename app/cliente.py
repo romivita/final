@@ -36,19 +36,24 @@ class Cliente:
         self.comunicacion.cerrar_conexion()
 
     def actualizar_celda(self, celda, valor):
-        mensaje = f"{self.usuario},{celda},{valor}"
+        mensaje = json.dumps({"usuario": self.usuario, "celda": celda, "valor": valor})
         self.comunicacion.enviar_datos(mensaje)
 
     def recibir_actualizaciones(self):
         while True:
             try:
                 datos = self.comunicacion.recibir_datos()
-                actualizacion = json.loads(datos)
-                nombre_hoja = actualizacion["nombre_hoja"]
-                celda = actualizacion["celda"]
-                valor = actualizacion["valor"]
+                mensaje = json.loads(datos)
 
-                if nombre_hoja == self.nombre_hoja:
+                if "error" in mensaje:
+                    print(f"Error recibido del servidor: {mensaje['error']}")
+                    continue
+
+                nombre_hoja = mensaje.get("nombre_hoja")
+                celda = mensaje.get("celda")
+                valor = mensaje.get("valor")
+
+                if nombre_hoja == self.nombre_hoja and celda and valor is not None:
                     fila, columna = celda_a_indices(celda)
                     while len(self.hoja_de_calculo) < fila:
                         self.hoja_de_calculo.append([""] * len(self.hoja_de_calculo[0]))
@@ -65,6 +70,8 @@ class Cliente:
                     for fila in self.hoja_de_calculo:
                         print(",".join(fila))
 
+            except json.JSONDecodeError as je:
+                print(f"Error de JSON al decodificar datos: {je}")
             except Exception as e:
                 print(f"Error recibiendo actualización: {e}")
                 break

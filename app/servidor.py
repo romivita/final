@@ -67,14 +67,34 @@ class Servidor:
                 break
             print(f"Datos recibidos: {data}")
 
-            parts = data.split(",")
-            if len(parts) != 3:
-                print("Error: El formato de los datos no es válido.")
-                continue
+            try:
+                mensaje = json.loads(data)
+                usuario = mensaje.get("usuario")
+                celda = mensaje.get("celda")
+                valor = mensaje.get("valor", "")
 
-            usuario, celda, valor = parts
-            valor = f"{valor}({usuario})"
-            self.cola.put((nombre_hoja, celda, valor))
+                if not (usuario and celda):
+                    raise ValueError("Datos incompletos en el mensaje")
+
+                valor = f"{valor}({usuario})"
+                self.cola.put((nombre_hoja, celda, valor))
+
+            except json.JSONDecodeError as e:
+                print(f"Error en el formato de los datos: {e}")
+                self.enviar_error(cliente_socket, "Formato de datos no válido")
+            except ValueError as e:
+                print(f"Error en el contenido de los datos: {e}")
+                self.enviar_error(cliente_socket, str(e))
+            except Exception as e:
+                print(f"Error desconocido: {e}")
+                self.enviar_error(cliente_socket, "Error desconocido")
+
+    def enviar_error(self, cliente_socket, mensaje_error):
+        mensaje = json.dumps({"error": mensaje_error})
+        try:
+            cliente_socket.sendall(mensaje.encode())
+        except Exception as e:
+            print(f"Error enviando mensaje de error al cliente: {e}")
 
     def importar_csv_a_dict(self, nombre_hoja):
         ruta_archivo = os.path.abspath(
