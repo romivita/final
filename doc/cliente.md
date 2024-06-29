@@ -4,7 +4,7 @@ Clase que representa el cliente que se conecta a un servidor para actualizar una
     Atributos:
         host (str): Direccion del host del servidor.
         port (int): Puerto del servidor.
-        hoja_nombre (str): Nombre de la hoja de calculo.
+        nombre_hoja (str): Nombre de la hoja de calculo.
         comunicacion (Comunicacion): Instancia de la clase Comunicacion para gestionar la comunicacion con el servidor.
 
     Metodos:

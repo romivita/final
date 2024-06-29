@@ -19,11 +19,11 @@ Clase que representa el servidor que gestiona multiples hojas de calculo para di
                 cliente_socket (socket): Socket del cliente.
                 cliente_address (tuple): Direccion del cliente.
 
-        guardar_en_csv(hoja_nombre):
+        guardar_en_csv(nombre_hoja):
             Guarda los datos de la hoja de calculo especificada en un archivo CSV.
 
             Args:
-            hoja_nombre (str): Nombre de la hoja de calculo.
+            nombre_hoja (str): Nombre de la hoja de calculo.
 
         iniciar():
             Inicia el servidor y espera conexiones entrantes.
