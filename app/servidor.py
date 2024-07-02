@@ -17,6 +17,7 @@ class Servidor:
         self.cola = Queue(maxsize=100)
         self.lock = Lock()
         self.socket_servidor = self.inicializar_socket()
+        self.crear_directorio_hojas_de_calculo()
         self.escritor_thread = Thread(target=self.procesar_cola)
         self.escritor_thread.start()
 
@@ -25,6 +26,12 @@ class Servidor:
         socket_servidor.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         socket_servidor.bind((self.host, self.port))
         return socket_servidor
+
+    def crear_directorio_hojas_de_calculo(self):
+        ruta_directorio = os.path.abspath(os.path.join(os.path.dirname(__file__), 'hojas_de_calculo'))
+        if not os.path.exists(ruta_directorio):
+            os.makedirs(ruta_directorio)
+            print(f"Directorio {ruta_directorio} creado.")
 
     def inicializar_hoja(self, nombre_hoja):
         if nombre_hoja not in self.hojas_de_calculo_dict:
