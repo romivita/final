@@ -2,6 +2,8 @@ import csv
 import json
 import os
 import socket
+import sqlite3
+from hashlib import sha256
 from queue import Queue
 from threading import Thread, Lock
 
@@ -20,12 +22,17 @@ class Servidor:
         self.crear_directorio_hojas_de_calculo()
         self.escritor_thread = Thread(target=self.procesar_cola)
         self.escritor_thread.start()
+        self.inicializar_base_datos()
 
     def inicializar_socket(self):
-        socket_servidor = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        socket_servidor.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        socket_servidor.bind((self.host, self.port))
-        return socket_servidor
+        try:
+            socket_servidor = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            socket_servidor.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            socket_servidor.bind((self.host, self.port))
+            return socket_servidor
+        except Exception as e:
+            print(f"Error al inicializar el socket: {e}")
+            raise
 
     def crear_directorio_hojas_de_calculo(self):
         ruta_directorio = os.path.abspath(os.path.join(os.path.dirname(__file__), 'hojas_de_calculo'))
@@ -33,18 +40,82 @@ class Servidor:
             os.makedirs(ruta_directorio)
             print(f"Directorio {ruta_directorio} creado.")
 
-    def inicializar_hoja(self, nombre_hoja):
-        if nombre_hoja not in self.hojas_de_calculo_dict:
-            self.hojas_de_calculo_dict[nombre_hoja] = {(1, 1): ""}
+    def hoja_existe_en_base_de_datos(self, nombre_hoja, usuario):
+        conn = sqlite3.connect('database.db')
+        cursor = conn.cursor()
+        cursor.execute('SELECT COUNT(*) FROM hojas_calculo WHERE nombre = ? AND creador_id = ?', (nombre_hoja, usuario))
+        count = cursor.fetchone()[0]
+        conn.close()
+        return count > 0
+
+    def inicializar_base_datos(self):
+        try:
+            conn = sqlite3.connect('database.db')
+            cursor = conn.cursor()
+            cursor.execute('''CREATE TABLE IF NOT EXISTS usuarios (
+                                id INTEGER PRIMARY KEY,
+                                usuario TEXT UNIQUE,
+                                pwd TEXT)''')
+            cursor.execute('''CREATE TABLE IF NOT EXISTS hojas_calculo (
+                                id INTEGER PRIMARY KEY,
+                                nombre TEXT,
+                                creador_id INTEGER,
+                                FOREIGN KEY (creador_id) REFERENCES usuarios (id))''')
+            cursor.execute('''CREATE TABLE IF NOT EXISTS permisos (
+                                id INTEGER PRIMARY KEY,
+                                hoja_id INTEGER,
+                                usuario_id INTEGER,
+                                permisos TEXT,
+                                FOREIGN KEY (hoja_id) REFERENCES hojas_calculo (id),
+                                FOREIGN KEY (usuario_id) REFERENCES usuarios (id),
+                                UNIQUE(hoja_id, usuario_id))''')
+            conn.commit()
+            conn.close()
+            print("Base de datos inicializada.")
+        except Exception as e:
+            print(f"Error al inicializar la base de datos: {e}")
+            raise
+
+    def crear_hoja_en_base_de_datos(self, nombre_hoja, usuario_id):
+        try:
+            conn = sqlite3.connect('database.db')
+            cursor = conn.cursor()
+            cursor.execute('INSERT INTO hojas_calculo (nombre, creador_id) VALUES (?, ?)', (nombre_hoja, usuario_id))
+            hoja_id = cursor.lastrowid
+            cursor.execute('INSERT INTO permisos (hoja_id, usuario_id, permisos) VALUES (?, ?, ?)',
+                           (hoja_id, usuario_id, 'lectura-escritura'))
+            conn.commit()
+            conn.close()
+            print(f"Hoja de cálculo '{nombre_hoja}' creada para el usuario ID '{usuario_id}' en la base de datos.")
+        except sqlite3.Error as e:
+            print(f"Error al crear la hoja de cálculo: {e}")
+            raise
+
+    def obtener_hojas_usuario(self, usuario_id):
+        conn = sqlite3.connect('database.db')
+        cursor = conn.cursor()
+        cursor.execute('''SELECT hojas_calculo.nombre FROM hojas_calculo
+                          JOIN permisos ON hojas_calculo.id = permisos.hoja_id
+                          WHERE permisos.usuario_id = ?''', (usuario_id,))
+        hojas = cursor.fetchall()
+        conn.close()
+        return [hoja[0] for hoja in hojas]
+
+    def verificar_credenciales(self, usuario, pwd):
+        conn = sqlite3.connect('database.db')
+        cursor = conn.cursor()
+        hashed_password = sha256(pwd.encode()).hexdigest()
+        cursor.execute('SELECT id FROM usuarios WHERE usuario = ? AND pwd = ?', (usuario, hashed_password))
+        resultado = cursor.fetchone()
+        conn.close()
+        return resultado[0] if resultado else None
 
     def procesar_cola(self):
         while True:
             nombre_hoja, celda, valor = self.cola.get()
             fila, columna = celda_a_indices(celda)
-            print(f'Cola get valor: {valor}')
             self.hojas_de_calculo_dict.setdefault(nombre_hoja, {})[(fila, columna)] = valor
             self.guardar_en_csv(nombre_hoja)
-            print(f'Cola task done valor: {valor}')
             self.notificar_clientes(nombre_hoja, celda, valor)
             self.cola.task_done()
 
@@ -59,42 +130,77 @@ class Servidor:
             print(f"Conexión cerrada con {cliente_address}")
 
     def loop_cliente(self, cliente_socket):
-        cli_args = cliente_socket.recv(4096).decode()
-        usuario, nombre_hoja = cli_args.split(",")
-        print(f"Usuario conectado: {usuario}")
-        print(f"Nombre de hoja de cálculo recibido: {nombre_hoja}")
-
-        self.inicializar_hoja(nombre_hoja)
-        self.importar_csv_a_dict(nombre_hoja)
-        self.enviar_hoja_completa(cliente_socket, nombre_hoja)
-
-        while True:
+        try:
             data = cliente_socket.recv(4096).decode()
             if not data:
-                break
-            print(f"Datos recibidos: {data}")
+                return
 
-            try:
-                mensaje = json.loads(data)
-                usuario = mensaje.get("usuario")
-                celda = mensaje.get("celda")
-                valor = mensaje.get("valor", "")
+            mensaje = json.loads(data)
+            usuario = mensaje.get("usuario")
+            pwd = mensaje.get("pwd")
 
-                if not (usuario and celda):
-                    raise ValueError("Datos incompletos en el mensaje")
+            if not usuario or not pwd:
+                self.enviar_error(cliente_socket, "Credenciales inválidas")
+                return
 
-                valor = f"{valor}({usuario})"
-                self.cola.put((nombre_hoja, celda, valor))
+            usuario_id = self.verificar_credenciales(usuario, pwd)
+            if not usuario_id:
+                self.enviar_error(cliente_socket, "Credenciales inválidas")
+                return
 
-            except json.JSONDecodeError as e:
-                print(f"Error en el formato de los datos: {e}")
-                self.enviar_error(cliente_socket, "Formato de datos no válido")
-            except ValueError as e:
-                print(f"Error en el contenido de los datos: {e}")
-                self.enviar_error(cliente_socket, str(e))
-            except Exception as e:
-                print(f"Error desconocido: {e}")
-                self.enviar_error(cliente_socket, "Error desconocido")
+            hojas_usuario = self.obtener_hojas_usuario(usuario_id)
+            cliente_socket.sendall(json.dumps({"status": "OK", "hojas": hojas_usuario}).encode())
+
+            while True:
+                data = cliente_socket.recv(4096).decode()
+                if not data:
+                    break
+
+                try:
+                    mensaje = json.loads(data)
+                    opcion = mensaje.get("opcion", None)
+                    nombre_hoja = mensaje.get("nombre_hoja", None)
+
+                    if opcion:
+                        if opcion == "nueva":
+                            self.inicializar_hoja(nombre_hoja, usuario_id)
+                            self.importar_csv_a_dict(nombre_hoja)
+                            self.enviar_hoja_completa(cliente_socket, nombre_hoja)
+                        elif opcion == "existente":
+                            if self.hoja_existe_en_base_de_datos(nombre_hoja, usuario_id):
+                                self.importar_csv_a_dict(nombre_hoja)
+                                self.enviar_hoja_completa(cliente_socket, nombre_hoja)
+                            else:
+                                self.enviar_error(cliente_socket, "La hoja de cálculo no existe")
+                        elif opcion == "compartir":
+                            usuario_compartido = mensaje.get("usuario_compartido", None)
+                            if usuario_compartido:
+                                self.compartir_hoja(nombre_hoja, usuario_compartido, usuario_id, cliente_socket)
+                            else:
+                                self.enviar_error(cliente_socket, "Falta el usuario con quien compartir")
+                        else:
+                            self.enviar_error(cliente_socket, "Opción no válida")
+                    else:
+                        if 'nombre_hoja' in mensaje and 'celda' in mensaje and 'valor' in mensaje:
+                            nombre_hoja = mensaje.get("nombre_hoja")
+                            celda = mensaje.get("celda")
+                            valor = mensaje.get("valor", "")
+                            fila, columna = celda_a_indices(celda)
+                            valor = f"{valor}({usuario})"
+                            self.cola.put((nombre_hoja, celda, valor))
+                        else:
+                            self.enviar_error(cliente_socket, "Formato de mensaje incorrecto")
+                except json.JSONDecodeError as e:
+                    self.enviar_error(cliente_socket, f"Formato de mensaje JSON no válido: {e}")
+                except ValueError as e:
+                    self.enviar_error(cliente_socket, f"Valor inválido: {e}")
+                except sqlite3.Error as e:
+                    self.enviar_error(cliente_socket, f"Error en la base de datos: {e}")
+                except Exception as e:
+                    self.enviar_error(cliente_socket, f"Error desconocido: {e}")
+        except Exception as e:
+            self.enviar_error(cliente_socket, f"Error desconocido en la conexión: {e}")
+            return
 
     def enviar_error(self, cliente_socket, mensaje_error):
         mensaje = json.dumps({"error": mensaje_error})
@@ -102,6 +208,20 @@ class Servidor:
             cliente_socket.sendall(mensaje.encode())
         except Exception as e:
             print(f"Error enviando mensaje de error al cliente: {e}")
+
+    def inicializar_hoja(self, nombre_hoja, usuario_id):
+        # Verificar si la hoja ya existe en la base de datos
+        if self.hoja_existe_en_base_de_datos(nombre_hoja, usuario_id):
+            if nombre_hoja not in self.hojas_de_calculo_dict:
+                self.hojas_de_calculo_dict[nombre_hoja] = {}
+        else:
+            try:
+                self.crear_hoja_en_base_de_datos(nombre_hoja, usuario_id)
+                self.hojas_de_calculo_dict[nombre_hoja] = {}  # Inicializa la hoja vacía
+                self.guardar_en_csv(nombre_hoja)
+            except Exception as e:
+                raise ValueError(
+                    f"No se pudo crear la hoja de cálculo '{nombre_hoja}' para el usuario ID '{usuario_id}': {e}")
 
     def importar_csv_a_dict(self, nombre_hoja):
         ruta_archivo = os.path.abspath(
@@ -133,7 +253,6 @@ class Servidor:
             for fila in range(1, filas_max + 1):
                 fila_datos = [self.hojas_de_calculo_dict[nombre_hoja].get((fila, columna), "") for columna in
                               range(1, columnas_max + 1)]
-                print(f"Escribiendo en CSV: {fila_datos}")
                 writer.writerow(fila_datos)
         finally:
             file.close()
@@ -162,7 +281,32 @@ class Servidor:
             except Exception as e:
                 print(f"Error notificando al cliente: {e}")
 
-    def iniciar(self):
+    def compartir_hoja(self, nombre_hoja, usuario_compartido, usuario_id, cliente_socket):
+        conn = sqlite3.connect('database.db')
+        cursor = conn.cursor()
+        cursor.execute('SELECT id FROM usuarios WHERE usuario = ?', (usuario_compartido,))
+        usuario_compartido_id = cursor.fetchone()
+        if usuario_compartido_id:
+            usuario_compartido_id = usuario_compartido_id[0]
+            cursor.execute('SELECT id FROM hojas_calculo WHERE nombre = ? AND creador_id = ?',
+                           (nombre_hoja, usuario_id))
+            hoja_id = cursor.fetchone()
+            if hoja_id:
+                hoja_id = hoja_id[0]
+                cursor.execute('INSERT OR IGNORE INTO permisos (hoja_id, usuario_id, permisos) VALUES (?, ?, ?)',
+                               (hoja_id, usuario_compartido_id, 'lectura-escritura'))
+                conn.commit()
+                conn.close()
+                cliente_socket.sendall(json.dumps({"status": "OK"}).encode())
+            else:
+                conn.close()
+                self.enviar_error(cliente_socket,
+                                  f"La hoja de cálculo '{nombre_hoja}' no existe o no tiene permisos para compartirla")
+        else:
+            conn.close()
+            self.enviar_error(cliente_socket, f"El usuario {usuario_compartido} no existe")
+
+    def iniciar_servidor(self):
         self.socket_servidor.listen(5)
         print("Servidor escuchando en", (self.host, self.port))
         while True:
@@ -173,4 +317,4 @@ class Servidor:
 
 if __name__ == "__main__":
     servidor = Servidor()
-    servidor.iniciar()
+    servidor.iniciar_servidor()
