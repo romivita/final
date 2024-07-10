@@ -43,7 +43,10 @@ class Servidor:
     def hoja_existe_en_base_de_datos(self, nombre_hoja, usuario):
         conn = sqlite3.connect('database.db')
         cursor = conn.cursor()
-        cursor.execute('SELECT COUNT(*) FROM hojas_calculo WHERE nombre = ? AND creador_id = ?', (nombre_hoja, usuario))
+        cursor.execute('''SELECT COUNT(*) FROM hojas_calculo
+                          JOIN permisos ON hojas_calculo.id = permisos.hoja_id
+                          WHERE hojas_calculo.nombre = ? AND permisos.usuario_id = ?''',
+                       (nombre_hoja, usuario))
         count = cursor.fetchone()[0]
         conn.close()
         return count > 0
