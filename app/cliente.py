@@ -16,10 +16,10 @@ class Cliente:
         self.usuario = usuario
         self.comunicacion = Comunicacion(self.host, self.port)
         self.hoja_de_calculo = []
+        self.activo = True
 
     def conectar_servidor(self):
         self.comunicacion.conectar()
-        print("Conectado al servidor")
 
     def enviar_credenciales(self):
         pwd = getpass.getpass("Contraseña: ")
@@ -127,30 +127,38 @@ class Cliente:
         actualizacion_thread.start()
 
         try:
-            while True:
+            while self.activo:
                 fila = random.randint(1, 5)
                 columna = random.randint(1, 5)
                 celda = indices_a_celda(fila, columna)
                 valor = input(f"Ingrese el valor para {celda}: ")
                 self.actualizar_celda(nombre_hoja, celda, valor)
         except KeyboardInterrupt:
-            print("Cerrando conexión...")
+            self.detener_cliente()
         finally:
-            self.cerrar_conexion()
+            self.detener_cliente()
 
     def actualizar_celda(self, nombre_hoja, celda, valor):
         mensaje = json.dumps({"nombre_hoja": nombre_hoja, "celda": celda, "valor": valor})
         self.comunicacion.enviar_datos(mensaje)
 
+    def detener_cliente(self):
+        self.activo = False
+        self.cerrar_conexion()
+
     def cerrar_conexion(self):
         self.comunicacion.cerrar_conexion()
 
     def recibir_actualizaciones(self):
-        while True:
-            datos = self.comunicacion.recibir_datos()
-            if not datos:
-                break
-            print("\nActualización recibida:", datos)
+        while self.activo:
+            try:
+                datos = self.comunicacion.recibir_datos()
+                if not datos:
+                    break
+                print("\nActualización recibida:", datos)
+            except OSError:
+                if self.activo:
+                    break
 
 
 if __name__ == "__main__":

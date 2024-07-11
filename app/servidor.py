@@ -1,6 +1,7 @@
 import csv
 import json
 import os
+import signal
 import socket
 import sqlite3
 from hashlib import sha256
@@ -16,6 +17,7 @@ class Servidor:
         self.host, self.port = cargar_configuracion()
         self.clientes = []
         self.hojas_de_calculo_dict = {}
+        self.usuarios_hojas_compartidas = {}
         self.cola = Queue(maxsize=100)
         self.lock = Lock()
         self.socket_servidor = self.inicializar_socket()
@@ -23,6 +25,7 @@ class Servidor:
         self.escritor_thread = Thread(target=self.procesar_cola)
         self.escritor_thread.start()
         self.inicializar_base_datos()
+        signal.signal(signal.SIGINT, self.manejar_sigint)
 
     def inicializar_socket(self):
         try:
@@ -45,8 +48,7 @@ class Servidor:
         cursor = conn.cursor()
         cursor.execute('''SELECT COUNT(*) FROM hojas_calculo
                           JOIN permisos ON hojas_calculo.id = permisos.hoja_id
-                          WHERE hojas_calculo.nombre = ? AND permisos.usuario_id = ?''',
-                       (nombre_hoja, usuario))
+                          WHERE hojas_calculo.nombre = ? AND permisos.usuario_id = ?''', (nombre_hoja, usuario))
         count = cursor.fetchone()[0]
         conn.close()
         return count > 0
@@ -130,6 +132,9 @@ class Servidor:
         finally:
             cliente_socket.close()
             self.clientes.remove((cliente_socket, cliente_address))
+            for user in self.usuarios_hojas_compartidas.values():
+                if cliente_socket in user:
+                    user.remove(cliente_socket)
             print(f"Conexión cerrada con {cliente_address}")
 
     def loop_cliente(self, cliente_socket):
@@ -173,6 +178,7 @@ class Servidor:
                             if self.hoja_existe_en_base_de_datos(nombre_hoja, usuario_id):
                                 self.importar_csv_a_dict(nombre_hoja)
                                 self.enviar_hoja_completa(cliente_socket, nombre_hoja)
+                                self.asignar_permisos_cliente_dict(cliente_socket, nombre_hoja)
                             else:
                                 self.enviar_error(cliente_socket, "La hoja de cálculo no existe")
                         elif opcion == "compartir":
@@ -276,13 +282,20 @@ class Servidor:
 
         cliente_socket.sendall(json.dumps(datos).encode())
 
+    def asignar_permisos_cliente_dict(self, cliente_socket, nombre_hoja):
+        if nombre_hoja not in self.usuarios_hojas_compartidas:
+            self.usuarios_hojas_compartidas[nombre_hoja] = []
+        if cliente_socket not in self.usuarios_hojas_compartidas[nombre_hoja]:
+            self.usuarios_hojas_compartidas[nombre_hoja].append(cliente_socket)
+
     def notificar_clientes(self, nombre_hoja, celda, valor):
-        mensaje = json.dumps({"nombre_hoja": nombre_hoja, "celda": celda, "valor": valor})
-        for cliente_socket, _ in self.clientes:
-            try:
-                cliente_socket.sendall(mensaje.encode())
-            except Exception as e:
-                print(f"Error notificando al cliente: {e}")
+        if nombre_hoja in self.usuarios_hojas_compartidas:
+            mensaje = json.dumps({"nombre_hoja": nombre_hoja, "celda": celda, "valor": valor})
+            for cliente_socket in self.usuarios_hojas_compartidas[nombre_hoja]:
+                try:
+                    cliente_socket.sendall(mensaje.encode())
+                except Exception as e:
+                    print(f"Error notificando al cliente: {e}")
 
     def compartir_hoja(self, nombre_hoja, usuario_compartido, usuario_id, cliente_socket):
         conn = sqlite3.connect('database.db')
@@ -316,6 +329,11 @@ class Servidor:
             cliente_socket, cliente_address = self.socket_servidor.accept()
             cliente_thread = Thread(target=self.gestionar_cliente, args=(cliente_socket, cliente_address))
             cliente_thread.start()
+
+    def manejar_sigint(self, signum, frame):
+        print("\nTerminando el servidor...")
+        self.socket_servidor.close()
+        os._exit(0)
 
 
 if __name__ == "__main__":
