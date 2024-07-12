@@ -174,6 +174,7 @@ class Servidor:
                             self.inicializar_hoja(nombre_hoja, usuario_id)
                             self.importar_csv_a_dict(nombre_hoja)
                             self.enviar_hoja_completa(cliente_socket, nombre_hoja)
+                            self.asignar_permisos_cliente_dict(cliente_socket, nombre_hoja)  # Añadir esta línea
                         elif opcion == "existente":
                             if self.hoja_existe_en_base_de_datos(nombre_hoja, usuario_id):
                                 self.importar_csv_a_dict(nombre_hoja)
@@ -187,6 +188,8 @@ class Servidor:
                                 self.compartir_hoja(nombre_hoja, usuario_compartido, usuario_id, cliente_socket)
                             else:
                                 self.enviar_error(cliente_socket, "Falta el usuario con quien compartir")
+                        elif opcion == "registrar":
+                            self.asignar_permisos_cliente_dict(cliente_socket, nombre_hoja)  # Manejo de la nueva opción
                         else:
                             self.enviar_error(cliente_socket, "Opción no válida")
                     else:
@@ -219,14 +222,13 @@ class Servidor:
             print(f"Error enviando mensaje de error al cliente: {e}")
 
     def inicializar_hoja(self, nombre_hoja, usuario_id):
-        # Verificar si la hoja ya existe en la base de datos
         if self.hoja_existe_en_base_de_datos(nombre_hoja, usuario_id):
             if nombre_hoja not in self.hojas_de_calculo_dict:
                 self.hojas_de_calculo_dict[nombre_hoja] = {}
         else:
             try:
                 self.crear_hoja_en_base_de_datos(nombre_hoja, usuario_id)
-                self.hojas_de_calculo_dict[nombre_hoja] = {}  # Inicializa la hoja vacía
+                self.hojas_de_calculo_dict[nombre_hoja] = {}
                 self.guardar_en_csv(nombre_hoja)
             except Exception as e:
                 raise ValueError(

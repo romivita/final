@@ -17,6 +17,7 @@ class Cliente:
         self.comunicacion = Comunicacion(self.host, self.port)
         self.hoja_de_calculo = []
         self.activo = True
+        self.hojas_usuario = []
 
     def conectar_servidor(self):
         self.comunicacion.conectar()
@@ -50,7 +51,8 @@ class Cliente:
         elif opcion == "2":
             return self.seleccionar_hoja_existente()
         elif opcion == "3":
-            return self.compartir_hoja()
+            self.compartir_hoja()
+            return self.mostrar_menu_y_elegir_hoja()
         else:
             print("Opción no válida. Saliendo...")
             sys.exit(1)
@@ -59,7 +61,19 @@ class Cliente:
         nombre_hoja = input("Ingrese el nombre para la nueva hoja de cálculo: ")
         mensaje = json.dumps({"opcion": "nueva", "nombre_hoja": nombre_hoja})
         self.comunicacion.enviar_datos(mensaje)
-        return self.recibir_hoja_completa(nombre_hoja)
+        nombre_hoja = self.recibir_hoja_completa(nombre_hoja)
+
+        self.asignar_permisos_cliente_dict(nombre_hoja)
+
+        compartir = input("¿Desea compartir esta hoja de cálculo? (s/n): ").strip().lower()
+        if compartir == 's':
+            self.compartir_hoja_nombre(nombre_hoja)
+
+        return nombre_hoja
+
+    def asignar_permisos_cliente_dict(self, nombre_hoja):
+        mensaje = json.dumps({"opcion": "registrar", "nombre_hoja": nombre_hoja})
+        self.comunicacion.enviar_datos(mensaje)
 
     def seleccionar_hoja_existente(self):
         if not self.hojas_usuario:
@@ -90,22 +104,22 @@ class Cliente:
         opcion = int(input("Seleccione el número de la hoja de cálculo que desea compartir: "))
         if 1 <= opcion <= len(self.hojas_usuario):
             nombre_hoja = self.hojas_usuario[opcion - 1]
-            usuario_a_compartir = input("Ingrese el nombre del usuario con quien desea compartir la hoja: ")
-            mensaje = json.dumps(
-                {"opcion": "compartir", "nombre_hoja": nombre_hoja, "usuario_compartido": usuario_a_compartir})
-            self.comunicacion.enviar_datos(mensaje)
-            respuesta = self.comunicacion.recibir_datos()
-            respuesta_dict = json.loads(respuesta)
-            if "error" in respuesta_dict:
-                print(f"Error del servidor: {respuesta_dict['error']}")
-            else:
-                print(f"Hoja de cálculo '{nombre_hoja}' compartida con éxito con el usuario '{usuario_a_compartir}'.")
+            self.compartir_hoja_nombre(nombre_hoja)
         else:
             print("Opción no válida.")
             return self.mostrar_menu_y_elegir_hoja()
 
-        self.cerrar_conexion()
-        sys.exit(0)
+    def compartir_hoja_nombre(self, nombre_hoja):
+        usuario_a_compartir = input("Ingrese el nombre del usuario con quien desea compartir la hoja: ")
+        mensaje = json.dumps(
+            {"opcion": "compartir", "nombre_hoja": nombre_hoja, "usuario_compartido": usuario_a_compartir})
+        self.comunicacion.enviar_datos(mensaje)
+        respuesta = self.comunicacion.recibir_datos()
+        respuesta_dict = json.loads(respuesta)
+        if "error" in respuesta_dict:
+            print(f"Error del servidor: {respuesta_dict['error']}")
+        else:
+            print(f"Hoja de cálculo '{nombre_hoja}' compartida con éxito con el usuario '{usuario_a_compartir}'.")
 
     def recibir_hoja_completa(self, nombre_hoja):
         datos = self.comunicacion.recibir_datos()
