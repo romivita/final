@@ -4,11 +4,12 @@ import os
 import signal
 import socket
 import sqlite3
-from hashlib import sha256
 from queue import Queue
 from threading import Thread, Lock
 
 from config_util import cargar_configuracion
+from database_util import (inicializar_base_datos, verificar_credenciales, obtener_hojas_usuario,
+                           crear_hoja_en_base_de_datos, hoja_existe_en_base_de_datos, compartir_hoja)
 from utils import celda_a_indices
 
 
@@ -24,7 +25,7 @@ class Servidor:
         self.crear_directorio_hojas_de_calculo()
         self.escritor_thread = Thread(target=self.procesar_cola)
         self.escritor_thread.start()
-        self.inicializar_base_datos()
+        inicializar_base_datos()
         signal.signal(signal.SIGINT, self.manejar_sigint)
 
     def inicializar_socket(self):
@@ -44,76 +45,16 @@ class Servidor:
             print(f"Directorio {ruta_directorio} creado.")
 
     def hoja_existe_en_base_de_datos(self, nombre_hoja, usuario):
-        conn = sqlite3.connect('database.db')
-        cursor = conn.cursor()
-        cursor.execute('''SELECT COUNT(*) FROM hojas_calculo
-                          JOIN permisos ON hojas_calculo.id = permisos.hoja_id
-                          WHERE hojas_calculo.nombre = ? AND permisos.usuario_id = ?''', (nombre_hoja, usuario))
-        count = cursor.fetchone()[0]
-        conn.close()
-        return count > 0
-
-    def inicializar_base_datos(self):
-        try:
-            conn = sqlite3.connect('database.db')
-            cursor = conn.cursor()
-            cursor.execute('''CREATE TABLE IF NOT EXISTS usuarios (
-                                id INTEGER PRIMARY KEY,
-                                usuario TEXT UNIQUE,
-                                pwd TEXT)''')
-            cursor.execute('''CREATE TABLE IF NOT EXISTS hojas_calculo (
-                                id INTEGER PRIMARY KEY,
-                                nombre TEXT,
-                                creador_id INTEGER,
-                                FOREIGN KEY (creador_id) REFERENCES usuarios (id))''')
-            cursor.execute('''CREATE TABLE IF NOT EXISTS permisos (
-                                id INTEGER PRIMARY KEY,
-                                hoja_id INTEGER,
-                                usuario_id INTEGER,
-                                permisos TEXT,
-                                FOREIGN KEY (hoja_id) REFERENCES hojas_calculo (id),
-                                FOREIGN KEY (usuario_id) REFERENCES usuarios (id),
-                                UNIQUE(hoja_id, usuario_id))''')
-            conn.commit()
-            conn.close()
-            print("Base de datos inicializada.")
-        except Exception as e:
-            print(f"Error al inicializar la base de datos: {e}")
-            raise
+        return hoja_existe_en_base_de_datos(nombre_hoja, usuario)
 
     def crear_hoja_en_base_de_datos(self, nombre_hoja, usuario_id):
-        try:
-            conn = sqlite3.connect('database.db')
-            cursor = conn.cursor()
-            cursor.execute('INSERT INTO hojas_calculo (nombre, creador_id) VALUES (?, ?)', (nombre_hoja, usuario_id))
-            hoja_id = cursor.lastrowid
-            cursor.execute('INSERT INTO permisos (hoja_id, usuario_id, permisos) VALUES (?, ?, ?)',
-                           (hoja_id, usuario_id, 'lectura-escritura'))
-            conn.commit()
-            conn.close()
-            print(f"Hoja de cálculo '{nombre_hoja}' creada para el usuario ID '{usuario_id}' en la base de datos.")
-        except sqlite3.Error as e:
-            print(f"Error al crear la hoja de cálculo: {e}")
-            raise
+        crear_hoja_en_base_de_datos(nombre_hoja, usuario_id)
 
     def obtener_hojas_usuario(self, usuario_id):
-        conn = sqlite3.connect('database.db')
-        cursor = conn.cursor()
-        cursor.execute('''SELECT hojas_calculo.nombre FROM hojas_calculo
-                          JOIN permisos ON hojas_calculo.id = permisos.hoja_id
-                          WHERE permisos.usuario_id = ?''', (usuario_id,))
-        hojas = cursor.fetchall()
-        conn.close()
-        return [hoja[0] for hoja in hojas]
+        return obtener_hojas_usuario(usuario_id)
 
-    def verificar_credenciales(self, usuario, pwd):
-        conn = sqlite3.connect('database.db')
-        cursor = conn.cursor()
-        hashed_password = sha256(pwd.encode()).hexdigest()
-        cursor.execute('SELECT id FROM usuarios WHERE usuario = ? AND pwd = ?', (usuario, hashed_password))
-        resultado = cursor.fetchone()
-        conn.close()
-        return resultado[0] if resultado else None
+    def verificar_credenciales(self, usuario, pwd_hash):
+        return verificar_credenciales(usuario, pwd_hash)
 
     def procesar_cola(self):
         while True:
@@ -300,29 +241,11 @@ class Servidor:
                     print(f"Error notificando al cliente: {e}")
 
     def compartir_hoja(self, nombre_hoja, usuario_compartido, usuario_id, cliente_socket):
-        conn = sqlite3.connect('database.db')
-        cursor = conn.cursor()
-        cursor.execute('SELECT id FROM usuarios WHERE usuario = ?', (usuario_compartido,))
-        usuario_compartido_id = cursor.fetchone()
-        if usuario_compartido_id:
-            usuario_compartido_id = usuario_compartido_id[0]
-            cursor.execute('SELECT id FROM hojas_calculo WHERE nombre = ? AND creador_id = ?',
-                           (nombre_hoja, usuario_id))
-            hoja_id = cursor.fetchone()
-            if hoja_id:
-                hoja_id = hoja_id[0]
-                cursor.execute('INSERT OR IGNORE INTO permisos (hoja_id, usuario_id, permisos) VALUES (?, ?, ?)',
-                               (hoja_id, usuario_compartido_id, 'lectura-escritura'))
-                conn.commit()
-                conn.close()
-                cliente_socket.sendall(json.dumps({"status": "OK"}).encode())
-            else:
-                conn.close()
-                self.enviar_error(cliente_socket,
-                                  f"La hoja de cálculo '{nombre_hoja}' no existe o no tiene permisos para compartirla")
+        resultado = compartir_hoja(nombre_hoja, usuario_compartido, usuario_id)
+        if "error" in resultado:
+            self.enviar_error(cliente_socket, resultado["error"])
         else:
-            conn.close()
-            self.enviar_error(cliente_socket, f"El usuario {usuario_compartido} no existe")
+            cliente_socket.sendall(json.dumps({"status": "OK"}).encode())
 
     def iniciar_servidor(self):
         self.socket_servidor.listen(5)

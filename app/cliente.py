@@ -25,7 +25,7 @@ class Cliente:
     def enviar_credenciales(self):
         pwd = getpass.getpass("Contraseña: ")
         pwd_hash = hashlib.sha256(pwd.encode()).hexdigest()
-        mensaje = json.dumps({"usuario": self.usuario, "pwd": pwd})
+        mensaje = json.dumps({"usuario": self.usuario, "pwd": pwd_hash})
         self.comunicacion.enviar_datos(mensaje)
         respuesta = self.comunicacion.recibir_datos()
         respuesta_dict = json.loads(respuesta)
@@ -39,23 +39,22 @@ class Cliente:
             sys.exit(1)
 
     def mostrar_menu_y_elegir_hoja(self):
-        print(f"Hojas de cálculo disponibles: {self.hojas_usuario}")
-        print("Elija una opción:")
-        print("1. Crear nueva hoja de cálculo")
-        print("2. Seleccionar hoja de cálculo existente")
-        print("3. Compartir hoja de cálculo")
-        opcion = input("Ingrese el número de la opción deseada: ")
+        while True:
+            print(f"Hojas de cálculo disponibles: {self.hojas_usuario}")
+            print("Elija una opción:")
+            print("1. Crear nueva hoja de cálculo")
+            print("2. Seleccionar hoja de cálculo existente")
+            print("3. Compartir hoja de cálculo")
+            opcion = input("Ingrese el número de la opción deseada: ")
 
-        if opcion == "1":
-            return self.crear_nueva_hoja()
-        elif opcion == "2":
-            return self.seleccionar_hoja_existente()
-        elif opcion == "3":
-            self.compartir_hoja()
-            return self.mostrar_menu_y_elegir_hoja()
-        else:
-            print("Opción no válida. Saliendo...")
-            sys.exit(1)
+            if opcion == "1":
+                return self.crear_nueva_hoja()
+            elif opcion == "2":
+                return self.seleccionar_hoja_existente()
+            elif opcion == "3":
+                self.compartir_hoja()
+            else:
+                print("Opción no válida. Intente de nuevo.")
 
     def crear_nueva_hoja(self):
         nombre_hoja = input("Ingrese el nombre para la nueva hoja de cálculo: ")
@@ -80,34 +79,37 @@ class Cliente:
             print("No tiene hojas de cálculo existentes.")
             return self.mostrar_menu_y_elegir_hoja()
 
-        print("Hojas de cálculo disponibles:")
-        for i, hoja in enumerate(self.hojas_usuario, start=1):
-            print(f"{i}. {hoja}")
-        opcion = int(input("Seleccione el número de la hoja de cálculo: "))
-        if 1 <= opcion <= len(self.hojas_usuario):
-            nombre_hoja = self.hojas_usuario[opcion - 1]
-            mensaje = json.dumps({"opcion": "existente", "nombre_hoja": nombre_hoja})
-            self.comunicacion.enviar_datos(mensaje)
-            return self.recibir_hoja_completa(nombre_hoja)
-        else:
-            print("Opción no válida.")
-            return self.mostrar_menu_y_elegir_hoja()
+        while True:
+            print("Hojas de cálculo disponibles:")
+            for i, hoja in enumerate(self.hojas_usuario, start=1):
+                print(f"{i}. {hoja}")
+            opcion = input("Seleccione el número de la hoja de cálculo: ")
+            if opcion.isdigit():
+                opcion = int(opcion)
+                if 1 <= opcion <= len(self.hojas_usuario):
+                    nombre_hoja = self.hojas_usuario[opcion - 1]
+                    mensaje = json.dumps({"opcion": "existente", "nombre_hoja": nombre_hoja})
+                    self.comunicacion.enviar_datos(mensaje)
+                    return self.recibir_hoja_completa(nombre_hoja)
+            print("Opción no válida. Intente de nuevo.")
 
     def compartir_hoja(self):
         if not self.hojas_usuario:
             print("No tiene hojas de cálculo existentes para compartir.")
-            return self.mostrar_menu_y_elegir_hoja()
+            return
 
-        print("Hojas de cálculo disponibles:")
-        for i, hoja in enumerate(self.hojas_usuario, start=1):
-            print(f"{i}. {hoja}")
-        opcion = int(input("Seleccione el número de la hoja de cálculo que desea compartir: "))
-        if 1 <= opcion <= len(self.hojas_usuario):
-            nombre_hoja = self.hojas_usuario[opcion - 1]
-            self.compartir_hoja_nombre(nombre_hoja)
-        else:
-            print("Opción no válida.")
-            return self.mostrar_menu_y_elegir_hoja()
+        while True:
+            print("Hojas de cálculo disponibles:")
+            for i, hoja in enumerate(self.hojas_usuario, start=1):
+                print(f"{i}. {hoja}")
+            opcion = input("Seleccione el número de la hoja de cálculo que desea compartir: ")
+            if opcion.isdigit():
+                opcion = int(opcion)
+                if 1 <= opcion <= len(self.hojas_usuario):
+                    nombre_hoja = self.hojas_usuario[opcion - 1]
+                    self.compartir_hoja_nombre(nombre_hoja)
+                    return
+            print("Opción no válida. Intente de nuevo.")
 
     def compartir_hoja_nombre(self, nombre_hoja):
         usuario_a_compartir = input("Ingrese el nombre del usuario con quien desea compartir la hoja: ")
