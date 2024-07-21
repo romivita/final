@@ -10,7 +10,7 @@ from threading import Thread, Lock
 from config_util import cargar_configuracion
 from database_util import (inicializar_base_datos, verificar_credenciales, obtener_hojas_usuario,
                            crear_hoja_en_base_de_datos, hoja_existe_en_base_de_datos, compartir_hoja)
-from utils import celda_a_indices
+from utils import celda_a_indices, safe_eval
 
 
 class Servidor:
@@ -59,6 +59,11 @@ class Servidor:
     def procesar_cola(self):
         while True:
             nombre_hoja, celda, valor = self.cola.get()
+            if valor.startswith('='):
+                try:
+                    valor = str(safe_eval(valor[1:]))
+                except Exception as e:
+                    valor = f"Error: {e}"
             fila, columna = celda_a_indices(celda)
             self.hojas_de_calculo_dict.setdefault(nombre_hoja, {})[(fila, columna)] = valor
             self.guardar_en_csv(nombre_hoja)
@@ -115,7 +120,7 @@ class Servidor:
                             self.inicializar_hoja(nombre_hoja, usuario_id)
                             self.importar_csv_a_dict(nombre_hoja)
                             self.enviar_hoja_completa(cliente_socket, nombre_hoja)
-                            self.asignar_permisos_cliente_dict(cliente_socket, nombre_hoja)  # Añadir esta línea
+                            self.asignar_permisos_cliente_dict(cliente_socket, nombre_hoja)
                         elif opcion == "existente":
                             if self.hoja_existe_en_base_de_datos(nombre_hoja, usuario_id):
                                 self.importar_csv_a_dict(nombre_hoja)
@@ -129,8 +134,10 @@ class Servidor:
                                 self.compartir_hoja(nombre_hoja, usuario_compartido, usuario_id, cliente_socket)
                             else:
                                 self.enviar_error(cliente_socket, "Falta el usuario con quien compartir")
+                        elif opcion == "descargar":
+                            self.enviar_csv(cliente_socket, nombre_hoja)
                         elif opcion == "registrar":
-                            self.asignar_permisos_cliente_dict(cliente_socket, nombre_hoja)  # Manejo de la nueva opción
+                            self.asignar_permisos_cliente_dict(cliente_socket, nombre_hoja)
                         else:
                             self.enviar_error(cliente_socket, "Opción no válida")
                     else:
@@ -154,6 +161,21 @@ class Servidor:
         except Exception as e:
             self.enviar_error(cliente_socket, f"Error desconocido en la conexión: {e}")
             return
+
+    def enviar_csv(self, cliente_socket, nombre_hoja):
+        ruta_csv = os.path.abspath(os.path.join(os.path.dirname(__file__), 'hojas_de_calculo', f"{nombre_hoja}.csv"))
+        try:
+            archivo = open(ruta_csv, "r")
+            try:
+                contenido = archivo.read()
+                mensaje = json.dumps({"csv": contenido})
+                cliente_socket.sendall(mensaje.encode())
+            finally:
+                archivo.close()
+        except FileNotFoundError:
+            self.enviar_error(cliente_socket, f"El archivo {nombre_hoja}.csv no existe.")
+        except Exception as e:
+            self.enviar_error(cliente_socket, f"Error al enviar el archivo {nombre_hoja}.csv: {e}")
 
     def enviar_error(self, cliente_socket, mensaje_error):
         mensaje = json.dumps({"error": mensaje_error})
@@ -223,7 +245,8 @@ class Servidor:
         finally:
             self.lock.release()
 
-        cliente_socket.sendall(json.dumps(datos).encode())
+        mensaje = json.dumps(datos)
+        cliente_socket.sendall(mensaje.encode())
 
     def asignar_permisos_cliente_dict(self, cliente_socket, nombre_hoja):
         if nombre_hoja not in self.usuarios_hojas_compartidas:

@@ -1,13 +1,14 @@
 import getpass
 import hashlib
 import json
+import os
 import random
 import sys
 from threading import Thread
 
 from comunicacion import Comunicacion
 from config_util import cargar_configuracion
-from utils import indices_a_celda
+from utils import indices_a_celda, safe_eval
 
 
 class Cliente:
@@ -40,11 +41,16 @@ class Cliente:
 
     def mostrar_menu_y_elegir_hoja(self):
         while True:
-            print(f"Hojas de cálculo disponibles: {self.hojas_usuario}")
+            if not self.hojas_usuario:
+                print("No tiene hojas de cálculo disponibles.")
+            else:
+                print(f"Hojas de cálculo disponibles: {self.hojas_usuario}")
             print("Elija una opción:")
             print("1. Crear nueva hoja de cálculo")
-            print("2. Seleccionar hoja de cálculo existente")
-            print("3. Compartir hoja de cálculo")
+            if self.hojas_usuario:
+                print("2. Seleccionar hoja de cálculo existente")
+                print("3. Compartir hoja de cálculo")
+                print("4. Descargar hoja de cálculo en formato CSV")
             opcion = input("Ingrese el número de la opción deseada: ")
 
             if opcion == "1":
@@ -53,6 +59,8 @@ class Cliente:
                 return self.seleccionar_hoja_existente()
             elif opcion == "3":
                 self.compartir_hoja()
+            elif opcion == "4":
+                self.descargar_hoja_csv()
             else:
                 print("Opción no válida. Intente de nuevo.")
 
@@ -61,13 +69,10 @@ class Cliente:
         mensaje = json.dumps({"opcion": "nueva", "nombre_hoja": nombre_hoja})
         self.comunicacion.enviar_datos(mensaje)
         nombre_hoja = self.recibir_hoja_completa(nombre_hoja)
-
         self.asignar_permisos_cliente_dict(nombre_hoja)
-
         compartir = input("¿Desea compartir esta hoja de cálculo? (s/n): ").strip().lower()
         if compartir == 's':
             self.compartir_hoja_nombre(nombre_hoja)
-
         return nombre_hoja
 
     def asignar_permisos_cliente_dict(self, nombre_hoja):
@@ -123,25 +128,56 @@ class Cliente:
         else:
             print(f"Hoja de cálculo '{nombre_hoja}' compartida con éxito con el usuario '{usuario_a_compartir}'.")
 
+    def descargar_hoja_csv(self):
+        if not self.hojas_usuario:
+            print("No tiene hojas de cálculo existentes para descargar.")
+            return
+        while True:
+            print("Hojas de cálculo disponibles:")
+            for i, hoja in enumerate(self.hojas_usuario, start=1):
+                print(f"{i}. {hoja}")
+            opcion = input("Seleccione el número de la hoja de cálculo que desea descargar: ")
+            if opcion.isdigit():
+                opcion = int(opcion)
+                if 1 <= opcion <= len(self.hojas_usuario):
+                    nombre_hoja = self.hojas_usuario[opcion - 1]
+                    mensaje = json.dumps({"opcion": "descargar", "nombre_hoja": nombre_hoja})
+                    self.comunicacion.enviar_datos(mensaje)
+                    respuesta = self.comunicacion.recibir_datos()
+                    try:
+                        respuesta_dict = json.loads(respuesta)
+                    except json.JSONDecodeError as e:
+                        print(f"Error al decodificar la respuesta JSON: {e}")
+                        return
+                    if "error" in respuesta_dict:
+                        print(f"Error del servidor: {respuesta_dict['error']}")
+                    else:
+                        downloads_path = os.path.join(os.path.expanduser('~'), 'Downloads')
+                        file_path = os.path.join(downloads_path, f"{nombre_hoja}.csv")
+                        file = open(file_path, "w")
+                        try:
+                            file.write(respuesta_dict["csv"])
+                        finally:
+                            file.close()
+                        print(f"Hoja de cálculo '{nombre_hoja}' descargada con éxito en '{file_path}'.")
+                    return
+            print("Opción no válida. Intente de nuevo.")
+
     def recibir_hoja_completa(self, nombre_hoja):
         datos = self.comunicacion.recibir_datos()
         hoja_recibida = json.loads(datos)
-
         if "error" in hoja_recibida:
             print(f"Error recibido del servidor: {hoja_recibida['error']}")
             sys.exit(1)
-
         self.hoja_de_calculo = hoja_recibida
         print("Hoja de cálculo recibida:")
         for fila in self.hoja_de_calculo:
             print(",".join(fila))
-
         return nombre_hoja
 
     def iniciar_interaccion(self, nombre_hoja):
         actualizacion_thread = Thread(target=self.recibir_actualizaciones)
         actualizacion_thread.start()
-
         try:
             while self.activo:
                 fila = random.randint(1, 5)
@@ -155,6 +191,13 @@ class Cliente:
             self.detener_cliente()
 
     def actualizar_celda(self, nombre_hoja, celda, valor):
+        if valor.startswith('='):
+            try:
+                resultado = safe_eval(valor[1:])
+                valor = str(resultado)
+            except Exception as e:
+                print(f"Error al evaluar la fórmula: {e}")
+                return
         mensaje = json.dumps({"nombre_hoja": nombre_hoja, "celda": celda, "valor": valor})
         self.comunicacion.enviar_datos(mensaje)
 
@@ -168,10 +211,13 @@ class Cliente:
     def recibir_actualizaciones(self):
         while self.activo:
             try:
-                datos = self.comunicacion.recibir_datos()
-                if not datos:
-                    break
-                print("\nActualización recibida:", datos)
+                actualizacion = self.comunicacion.recibir_datos()
+                if actualizacion:
+                    actualizacion = json.loads(actualizacion)
+                    print("\nActualización recibida:")
+                    print(actualizacion)
+            except json.JSONDecodeError as e:
+                print(f"Error al decodificar la actualización JSON: {e}")
             except OSError:
                 if self.activo:
                     break
