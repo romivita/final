@@ -24,20 +24,46 @@ class Cliente:
         self.comunicacion.conectar()
 
     def enviar_credenciales(self):
-        pwd = getpass.getpass("Contraseña: ")
-        pwd_hash = hashlib.sha256(pwd.encode()).hexdigest()
-        mensaje = json.dumps({"usuario": self.usuario, "pwd": pwd_hash})
+        mensaje = json.dumps({"usuario": self.usuario, "accion": "verificar"})
         self.comunicacion.enviar_datos(mensaje)
         respuesta = self.comunicacion.recibir_datos()
         respuesta_dict = json.loads(respuesta)
         if "error" in respuesta_dict:
             print(f"Error del servidor: {respuesta_dict['error']}")
             sys.exit(1)
-        elif respuesta_dict["status"] == "OK":
-            self.hojas_usuario = respuesta_dict["hojas"]
-        else:
-            print("Error desconocido.")
-            sys.exit(1)
+
+        if respuesta_dict["status"] == "no_existe":
+            print("Nueva cuenta.")
+            pwd = getpass.getpass("Contraseña: ")
+            pwd_hash = hashlib.sha256(pwd.encode()).hexdigest()
+            mensaje_creacion = json.dumps({"crear_nuevo_usuario": True, "usuario": self.usuario, "pwd": pwd_hash})
+            self.comunicacion.enviar_datos(mensaje_creacion)
+            respuesta = self.comunicacion.recibir_datos()
+            respuesta_dict = json.loads(respuesta)
+            if "error" in respuesta_dict:
+                print(f"Error del servidor: {respuesta_dict['error']}")
+                sys.exit(1)
+            if respuesta_dict["status"] == "nuevo_usuario_creado":
+                print("Usuario creado exitosamente.")
+            else:
+                print("Error desconocido.")
+                sys.exit(1)
+
+        elif respuesta_dict["status"] == "existe":
+            pwd = getpass.getpass("Contraseña: ")
+            pwd_hash = hashlib.sha256(pwd.encode()).hexdigest()
+            mensaje = json.dumps({"usuario": self.usuario, "pwd": pwd_hash})
+            self.comunicacion.enviar_datos(mensaje)
+            respuesta = self.comunicacion.recibir_datos()
+            respuesta_dict = json.loads(respuesta)
+            if "error" in respuesta_dict:
+                print(f"Error del servidor: {respuesta_dict['error']}")
+                sys.exit(1)
+            elif respuesta_dict["status"] == "OK":
+                self.hojas_usuario = respuesta_dict["hojas"]
+            else:
+                print("Error desconocido.")
+                sys.exit(1)
 
     def mostrar_menu_y_elegir_hoja(self):
         while True:

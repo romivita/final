@@ -6,7 +6,7 @@ def inicializar_base_datos():
         conn = sqlite3.connect('database.db')
         cursor = conn.cursor()
         cursor.execute('''CREATE TABLE IF NOT EXISTS usuarios (
-                            id INTEGER PRIMARY KEY,
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
                             usuario TEXT UNIQUE,
                             pwd_hash TEXT)''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS hojas_calculo (
@@ -99,3 +99,27 @@ def compartir_hoja(nombre_hoja, usuario_compartido, usuario_id):
     else:
         conn.close()
         return {"error": f"El usuario {usuario_compartido} no existe"}
+
+
+def usuario_existe(usuario):
+    conn = sqlite3.connect('database.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT id FROM usuarios WHERE usuario = ?', (usuario,))
+    resultado = cursor.fetchone()
+    conn.close()
+    print(f"usuario_existe - Usuario: {usuario}, Resultado: {resultado}")  # Mensaje de depuración
+    return resultado[0] if resultado else None
+
+
+def crear_usuario(usuario, pwd_hash):
+    try:
+        conn = sqlite3.connect('database.db')
+        cursor = conn.cursor()
+        cursor.execute('INSERT INTO usuarios (usuario, pwd_hash) VALUES (?, ?)', (usuario, pwd_hash))
+        conn.commit()
+        usuario_id = cursor.lastrowid
+        print(f"Resultado: {usuario_id}")  # Mensaje de depuración
+        conn.close()
+        return usuario_id
+    except sqlite3.IntegrityError:
+        return None

@@ -9,7 +9,8 @@ from threading import Thread, Lock
 
 from config_util import cargar_configuracion
 from database_util import (inicializar_base_datos, verificar_credenciales, obtener_hojas_usuario,
-                           crear_hoja_en_base_de_datos, hoja_existe_en_base_de_datos, compartir_hoja)
+                           crear_hoja_en_base_de_datos, hoja_existe_en_base_de_datos, compartir_hoja, usuario_existe,
+                           crear_usuario)
 from utils import celda_a_indices, safe_eval
 
 
@@ -53,6 +54,12 @@ class Servidor:
     def obtener_hojas_usuario(self, usuario_id):
         return obtener_hojas_usuario(usuario_id)
 
+    def usuario_existe(self, usuario):
+        return usuario_existe(usuario)
+
+    def crear_usuario(self, usuario, pwd_hash):
+        return crear_usuario(usuario, pwd_hash)
+
     def verificar_credenciales(self, usuario, pwd_hash):
         return verificar_credenciales(usuario, pwd_hash)
 
@@ -91,19 +98,53 @@ class Servidor:
 
             mensaje = json.loads(data)
             usuario = mensaje.get("usuario")
-            pwd = mensaje.get("pwd")
-
-            if not usuario or not pwd:
-                self.enviar_error(cliente_socket, "Credenciales inválidas")
+            if not usuario:
+                self.enviar_error(cliente_socket, "Usuario no proporcionado")
                 return
 
-            usuario_id = self.verificar_credenciales(usuario, pwd)
-            if not usuario_id:
-                self.enviar_error(cliente_socket, "Credenciales inválidas")
-                return
+            usuario_id = self.usuario_existe(usuario)
+            if usuario_id:
+                cliente_socket.sendall(json.dumps({"status": "existe"}).encode())
+                data = cliente_socket.recv(4096).decode()
+                if not data:
+                    return
+                mensaje = json.loads(data)
+                pwd = mensaje.get("pwd")
+                if not pwd:
+                    self.enviar_error(cliente_socket, "Contraseña no proporcionada")
+                    return
 
-            hojas_usuario = self.obtener_hojas_usuario(usuario_id)
-            cliente_socket.sendall(json.dumps({"status": "OK", "hojas": hojas_usuario}).encode())
+                usuario_id = self.verificar_credenciales(usuario, pwd)
+                if not usuario_id:
+                    self.enviar_error(cliente_socket, "Credenciales inválidas")
+                    return
+
+                hojas_usuario = self.obtener_hojas_usuario(usuario_id)
+                cliente_socket.sendall(json.dumps({"status": "OK", "hojas": hojas_usuario}).encode())
+            else:
+                cliente_socket.sendall(json.dumps({"status": "no_existe"}).encode())
+                data = cliente_socket.recv(4096).decode()
+                if not data:
+                    return
+                mensaje = json.loads(data)
+                if mensaje.get("crear_nuevo_usuario"):
+                    pwd_hash = mensaje.get("pwd")
+                    if pwd_hash:
+                        try:
+                            usuario_id = self.crear_usuario(usuario, pwd_hash)
+                            if usuario_id:
+                                cliente_socket.sendall(json.dumps({"status": "nuevo_usuario_creado"}).encode())
+                                hojas_usuario = self.obtener_hojas_usuario(usuario_id)
+                                cliente_socket.sendall(json.dumps({"status": "OK", "hojas": hojas_usuario}).encode())
+                            else:
+                                self.enviar_error(cliente_socket, "Error al crear el usuario")
+                        except Exception as e:
+                            self.enviar_error(cliente_socket, f"Error al crear el usuario: {e}")
+                    else:
+                        self.enviar_error(cliente_socket, "Contraseña no proporcionada para el nuevo usuario")
+                else:
+                    self.enviar_error(cliente_socket, "Solicitud de creación de usuario no válida")
+                return
 
             while True:
                 data = cliente_socket.recv(4096).decode()
