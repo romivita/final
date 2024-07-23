@@ -4,6 +4,7 @@ import os
 import signal
 import socket
 import sqlite3
+import time
 from queue import Queue
 from threading import Thread, Lock
 
@@ -45,37 +46,23 @@ class Servidor:
             os.makedirs(ruta_directorio)
             print(f"Directorio {ruta_directorio} creado.")
 
-    def hoja_existe_en_base_de_datos(self, nombre_hoja, usuario):
-        return hoja_existe_en_base_de_datos(nombre_hoja, usuario)
-
-    def crear_hoja_en_base_de_datos(self, nombre_hoja, usuario_id):
-        crear_hoja_en_base_de_datos(nombre_hoja, usuario_id)
-
-    def obtener_hojas_usuario(self, usuario_id):
-        return obtener_hojas_usuario(usuario_id)
-
-    def usuario_existe(self, usuario):
-        return usuario_existe(usuario)
-
-    def crear_usuario(self, usuario, pwd_hash):
-        return crear_usuario(usuario, pwd_hash)
-
-    def verificar_credenciales(self, usuario, pwd_hash):
-        return verificar_credenciales(usuario, pwd_hash)
-
     def procesar_cola(self):
         while True:
-            nombre_hoja, celda, valor = self.cola.get()
-            if valor.startswith('='):
-                try:
-                    valor = str(safe_eval(valor[1:]))
-                except Exception as e:
-                    valor = f"Error: {e}"
-            fila, columna = celda_a_indices(celda)
-            self.hojas_de_calculo_dict.setdefault(nombre_hoja, {})[(fila, columna)] = valor
-            self.guardar_en_csv(nombre_hoja)
-            self.notificar_clientes(nombre_hoja, celda, valor)
-            self.cola.task_done()
+            try:
+                nombre_hoja, celda, valor = self.cola.get()
+                if valor.startswith('='):
+                    try:
+                        valor = str(safe_eval(valor[1:]))
+                    except Exception as e:
+                        valor = f"Error: {e}"
+                fila, columna = celda_a_indices(celda)
+                self.hojas_de_calculo_dict.setdefault(nombre_hoja, {})[(fila, columna)] = valor
+                self.guardar_en_csv(nombre_hoja)
+                self.notificar_clientes(nombre_hoja, celda, valor)
+                self.cola.task_done()
+            except Exception as e:
+                print(f"Error procesando la cola: {e}")
+            time.sleep(0.1)
 
     def gestionar_cliente(self, cliente_socket, cliente_address):
         print(f"Conexión establecida con {cliente_address}")
@@ -102,7 +89,7 @@ class Servidor:
                 self.enviar_error(cliente_socket, "Usuario no proporcionado")
                 return
 
-            usuario_id = self.usuario_existe(usuario)
+            usuario_id = usuario_existe(usuario)
             if usuario_id:
                 cliente_socket.sendall(json.dumps({"status": "existe"}).encode())
                 data = cliente_socket.recv(4096).decode()
@@ -114,12 +101,12 @@ class Servidor:
                     self.enviar_error(cliente_socket, "Contraseña no proporcionada")
                     return
 
-                usuario_id = self.verificar_credenciales(usuario, pwd)
+                usuario_id = verificar_credenciales(usuario, pwd)
                 if not usuario_id:
                     self.enviar_error(cliente_socket, "Credenciales inválidas")
                     return
 
-                hojas_usuario = self.obtener_hojas_usuario(usuario_id)
+                hojas_usuario = obtener_hojas_usuario(usuario_id)
                 cliente_socket.sendall(json.dumps({"status": "OK", "hojas": hojas_usuario}).encode())
             else:
                 cliente_socket.sendall(json.dumps({"status": "no_existe"}).encode())
@@ -131,10 +118,10 @@ class Servidor:
                     pwd_hash = mensaje.get("pwd")
                     if pwd_hash:
                         try:
-                            usuario_id = self.crear_usuario(usuario, pwd_hash)
+                            usuario_id = crear_usuario(usuario, pwd_hash)
                             if usuario_id:
                                 cliente_socket.sendall(json.dumps({"status": "nuevo_usuario_creado"}).encode())
-                                hojas_usuario = self.obtener_hojas_usuario(usuario_id)
+                                hojas_usuario = obtener_hojas_usuario(usuario_id)
                                 cliente_socket.sendall(json.dumps({"status": "OK", "hojas": hojas_usuario}).encode())
                             else:
                                 self.enviar_error(cliente_socket, "Error al crear el usuario")
@@ -163,7 +150,7 @@ class Servidor:
                             self.enviar_hoja_completa(cliente_socket, nombre_hoja)
                             self.asignar_permisos_cliente_dict(cliente_socket, nombre_hoja)
                         elif opcion == "existente":
-                            if self.hoja_existe_en_base_de_datos(nombre_hoja, usuario_id):
+                            if hoja_existe_en_base_de_datos(nombre_hoja, usuario_id):
                                 self.importar_csv_a_dict(nombre_hoja)
                                 self.enviar_hoja_completa(cliente_socket, nombre_hoja)
                                 self.asignar_permisos_cliente_dict(cliente_socket, nombre_hoja)
@@ -226,12 +213,12 @@ class Servidor:
             print(f"Error enviando mensaje de error al cliente: {e}")
 
     def inicializar_hoja(self, nombre_hoja, usuario_id):
-        if self.hoja_existe_en_base_de_datos(nombre_hoja, usuario_id):
+        if hoja_existe_en_base_de_datos(nombre_hoja, usuario_id):
             if nombre_hoja not in self.hojas_de_calculo_dict:
                 self.hojas_de_calculo_dict[nombre_hoja] = {}
         else:
             try:
-                self.crear_hoja_en_base_de_datos(nombre_hoja, usuario_id)
+                crear_hoja_en_base_de_datos(nombre_hoja, usuario_id)
                 self.hojas_de_calculo_dict[nombre_hoja] = {}
                 self.guardar_en_csv(nombre_hoja)
             except Exception as e:
