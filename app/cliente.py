@@ -18,7 +18,7 @@ class Cliente:
         self.comunicacion = Comunicacion(self.host, self.port)
         self.hoja_de_calculo = []
         self.activo = True
-        self.hojas_usuario = []
+        self.hojas_usuario = {}
 
     def conectar_servidor(self):
         self.comunicacion.conectar()
@@ -60,7 +60,7 @@ class Cliente:
                 print(f"Error del servidor: {respuesta_dict['error']}")
                 sys.exit(1)
             elif respuesta_dict["status"] == "OK":
-                self.hojas_usuario = respuesta_dict["hojas"]
+                self.hojas_usuario = {hoja['id']: hoja['nombre'] for hoja in respuesta_dict["hojas"]}
             else:
                 print("Error desconocido.")
                 sys.exit(1)
@@ -68,106 +68,105 @@ class Cliente:
     def mostrar_menu_y_elegir_hoja(self):
         while True:
             if not self.hojas_usuario:
-                print("No tiene hojas de cálculo disponibles.")
+                print("No tiene hojas de calculo disponibles.")
             else:
-                print(f"Hojas de cálculo disponibles: {self.hojas_usuario}")
+                nombres_hojas = list(self.hojas_usuario.values())
+                print(f"Hojas de cálculo disponibles: {', '.join(nombres_hojas)}")
             print("Elija una opción:")
-            print("1. Crear nueva hoja de cálculo")
+            print("1. Crear nueva hoja de calculo")
             if self.hojas_usuario:
-                print("2. Seleccionar hoja de cálculo existente")
-                print("3. Compartir hoja de cálculo")
-                print("4. Descargar hoja de cálculo en formato CSV")
+                print("2. Seleccionar hoja de calculo existente")
+                print("3. Compartir hoja de calculo")
+                print("4. Descargar hoja de calculo en formato CSV")
             opcion = input("Ingrese el número de la opción deseada: ")
 
             if opcion == "1":
                 return self.crear_nueva_hoja()
             elif opcion == "2":
                 return self.seleccionar_hoja_existente()
-            elif opcion == "3":
-                self.compartir_hoja()
+            # elif opcion == "3":
+            #     self.compartir_hoja()
             elif opcion == "4":
                 self.descargar_hoja_csv()
             else:
                 print("Opción no válida. Intente de nuevo.")
 
     def crear_nueva_hoja(self):
-        nombre_hoja = input("Ingrese el nombre para la nueva hoja de cálculo: ")
+        nombre_hoja = input("Ingrese el nombre para la nueva hoja de calculo: ")
         mensaje = json.dumps({"opcion": "nueva", "nombre_hoja": nombre_hoja})
         self.comunicacion.enviar_datos(mensaje)
-        nombre_hoja = self.recibir_hoja_completa(nombre_hoja)
-        self.asignar_permisos_cliente_dict(nombre_hoja)
-        compartir = input("¿Desea compartir esta hoja de cálculo? (s/n): ").strip().lower()
-        if compartir == 's':
-            self.compartir_hoja_nombre(nombre_hoja)
-        return nombre_hoja
 
-    def asignar_permisos_cliente_dict(self, nombre_hoja):
-        mensaje = json.dumps({"opcion": "registrar", "nombre_hoja": nombre_hoja})
+        respuesta = self.comunicacion.recibir_datos()
+        print(f"Respuesta del servidor al crear hoja: {respuesta}")
+
+        try:
+            respuesta_json = json.loads(respuesta)
+            if 'status' in respuesta_json and respuesta_json['status'] == 'OK':
+                nueva_hoja_id = respuesta_json.get('hoja_id')
+                print(f"Hoja de calculo creada con ID: {respuesta_json['hoja_id']}")
+
+                self.asignar_permisos_cliente(nueva_hoja_id)
+
+                compartir = input("¿Desea compartir esta hoja de calculo? (s/n): ").strip().lower()
+                if compartir == 's':
+                    self.compartir_hoja(nueva_hoja_id)
+                return nueva_hoja_id
+            else:
+                print("Error al crear la hoja de calculo.")
+        except json.JSONDecodeError as e:
+            print(f"Error al decodificar la respuesta JSON: {e}")
+
+    def asignar_permisos_cliente(self, hoja_id):
+        mensaje = json.dumps({"opcion": "registrar", "hoja_id": f"{hoja_id}"})
         self.comunicacion.enviar_datos(mensaje)
 
     def seleccionar_hoja_existente(self):
         if not self.hojas_usuario:
-            print("No tiene hojas de cálculo existentes.")
+            print("No tiene hojas de calculo existentes.")
             return self.mostrar_menu_y_elegir_hoja()
 
         while True:
-            print("Hojas de cálculo disponibles:")
-            for i, hoja in enumerate(self.hojas_usuario, start=1):
-                print(f"{i}. {hoja}")
-            opcion = input("Seleccione el número de la hoja de cálculo: ")
+            print("Hojas de calculo disponibles:")
+            for i, (hoja_id, nombre) in enumerate(self.hojas_usuario.items(), start=1):
+                print(f"{i}. {nombre}")
+            opcion = input("Seleccione el número de la hoja de calculo: ")
             if opcion.isdigit():
                 opcion = int(opcion)
                 if 1 <= opcion <= len(self.hojas_usuario):
-                    nombre_hoja = self.hojas_usuario[opcion - 1]
-                    mensaje = json.dumps({"opcion": "existente", "nombre_hoja": nombre_hoja})
+                    hoja_id = list(self.hojas_usuario.keys())[opcion - 1]
+                    mensaje = json.dumps({"opcion": "existente", "hoja_id": f"{hoja_id}"})
+                    print(f"Enviando mensaje para seleccionar hoja existente: {mensaje}")  # Mensaje de depuración
                     self.comunicacion.enviar_datos(mensaje)
-                    return self.recibir_hoja_completa(nombre_hoja)
+                    return hoja_id
             print("Opción no válida. Intente de nuevo.")
 
-    def compartir_hoja(self):
-        if not self.hojas_usuario:
-            print("No tiene hojas de cálculo existentes para compartir.")
-            return
-
-        while True:
-            print("Hojas de cálculo disponibles:")
-            for i, hoja in enumerate(self.hojas_usuario, start=1):
-                print(f"{i}. {hoja}")
-            opcion = input("Seleccione el número de la hoja de cálculo que desea compartir: ")
-            if opcion.isdigit():
-                opcion = int(opcion)
-                if 1 <= opcion <= len(self.hojas_usuario):
-                    nombre_hoja = self.hojas_usuario[opcion - 1]
-                    self.compartir_hoja_nombre(nombre_hoja)
-                    return
-            print("Opción no válida. Intente de nuevo.")
-
-    def compartir_hoja_nombre(self, nombre_hoja):
+    def compartir_hoja(self, hoja_id):
         usuario_a_compartir = input("Ingrese el nombre del usuario con quien desea compartir la hoja: ")
         mensaje = json.dumps(
-            {"opcion": "compartir", "nombre_hoja": nombre_hoja, "usuario_compartido": usuario_a_compartir})
+            {"opcion": "compartir", "hoja_id": f"{hoja_id}", "usuario_compartido": usuario_a_compartir})
         self.comunicacion.enviar_datos(mensaje)
         respuesta = self.comunicacion.recibir_datos()
         respuesta_dict = json.loads(respuesta)
         if "error" in respuesta_dict:
             print(f"Error del servidor: {respuesta_dict['error']}")
         else:
-            print(f"Hoja de cálculo '{nombre_hoja}' compartida con éxito con el usuario '{usuario_a_compartir}'.")
+            print(
+                f"Hoja de calculo '{self.hojas_usuario[hoja_id]}' compartida con éxito con el usuario '{usuario_a_compartir}'.")
 
     def descargar_hoja_csv(self):
         if not self.hojas_usuario:
-            print("No tiene hojas de cálculo existentes para descargar.")
+            print("No tiene hojas de calculo existentes para descargar.")
             return
         while True:
-            print("Hojas de cálculo disponibles:")
-            for i, hoja in enumerate(self.hojas_usuario, start=1):
-                print(f"{i}. {hoja}")
-            opcion = input("Seleccione el número de la hoja de cálculo que desea descargar: ")
+            print("Hojas de calculo disponibles:")
+            for i, (hoja_id, nombre) in enumerate(self.hojas_usuario.items(), start=1):
+                print(f"{i}. {nombre}")
+            opcion = input("Seleccione el número de la hoja de calculo que desea descargar: ")
             if opcion.isdigit():
                 opcion = int(opcion)
                 if 1 <= opcion <= len(self.hojas_usuario):
-                    nombre_hoja = self.hojas_usuario[opcion - 1]
-                    mensaje = json.dumps({"opcion": "descargar", "nombre_hoja": nombre_hoja})
+                    hoja_id = list(self.hojas_usuario.keys())[opcion - 1]
+                    mensaje = json.dumps({"opcion": "descargar", "hoja_id": f"{hoja_id}"})
                     self.comunicacion.enviar_datos(mensaje)
                     respuesta = self.comunicacion.recibir_datos()
                     try:
@@ -179,29 +178,35 @@ class Cliente:
                         print(f"Error del servidor: {respuesta_dict['error']}")
                     else:
                         downloads_path = os.path.join(os.path.expanduser('~'), 'Downloads')
-                        file_path = os.path.join(downloads_path, f"{nombre_hoja}.csv")
+                        file_path = os.path.join(downloads_path, f"{self.hojas_usuario[hoja_id]}.csv")
                         file = open(file_path, "w")
                         try:
                             file.write(respuesta_dict["csv"])
                         finally:
                             file.close()
-                        print(f"Hoja de cálculo '{nombre_hoja}' descargada con éxito en '{file_path}'.")
+                        print(f"Hoja de calculo '{self.hojas_usuario[hoja_id]}' descargada con éxito en '{file_path}'.")
                     return
             print("Opción no válida. Intente de nuevo.")
 
-    def recibir_hoja_completa(self, nombre_hoja):
-        datos = self.comunicacion.recibir_datos()
-        hoja_recibida = json.loads(datos)
+    def recibir_hoja_completa(self):
+        datos = self.comunicacion.recibir_datos().strip()  # Eliminar delimitadores innecesarios
+        print(f"Datos recibidos para la hoja completa: {datos}")  # Mensaje de depuración
+        try:
+            hoja_recibida = json.loads(datos)
+        except json.JSONDecodeError as e:
+            print(f"Error al decodificar la respuesta JSON: {e}")
+            sys.exit(1)
+
         if "error" in hoja_recibida:
             print(f"Error recibido del servidor: {hoja_recibida['error']}")
             sys.exit(1)
-        self.hoja_de_calculo = hoja_recibida
-        print("Hoja de cálculo recibida:")
+
+        self.hoja_de_calculo = hoja_recibida["datos"]
+
         for fila in self.hoja_de_calculo:
             print(",".join(fila))
-        return nombre_hoja
 
-    def iniciar_interaccion(self, nombre_hoja):
+    def iniciar_thread_cliente(self, hoja_id):
         actualizacion_thread = Thread(target=self.recibir_actualizaciones)
         actualizacion_thread.start()
         try:
@@ -210,13 +215,13 @@ class Cliente:
                 columna = random.randint(1, 5)
                 celda = indices_a_celda(fila, columna)
                 valor = input(f"Ingrese el valor para {celda}: ")
-                self.actualizar_celda(nombre_hoja, celda, valor)
+                self.actualizar_celda(hoja_id, celda, valor)
         except KeyboardInterrupt:
             self.detener_cliente()
         finally:
             self.detener_cliente()
 
-    def actualizar_celda(self, nombre_hoja, celda, valor):
+    def actualizar_celda(self, hoja_id, celda, valor):
         if valor.startswith('='):
             try:
                 resultado = safe_eval(valor[1:])
@@ -224,15 +229,9 @@ class Cliente:
             except Exception as e:
                 print(f"Error al evaluar la fórmula: {e}")
                 return
-        mensaje = json.dumps({"nombre_hoja": nombre_hoja, "celda": celda, "valor": valor})
+        mensaje = json.dumps({"hoja_id": f"{hoja_id}", "celda": celda, "valor": valor})
+        print(f"Enviando actualización de celda: {mensaje}")
         self.comunicacion.enviar_datos(mensaje)
-
-    def detener_cliente(self):
-        self.activo = False
-        self.cerrar_conexion()
-
-    def cerrar_conexion(self):
-        self.comunicacion.cerrar_conexion()
 
     def recibir_actualizaciones(self):
         while self.activo:
@@ -248,6 +247,10 @@ class Cliente:
                 if self.activo:
                     break
 
+    def detener_cliente(self):
+        self.activo = False
+        self.comunicacion.cerrar_conexion()
+
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
@@ -256,5 +259,5 @@ if __name__ == "__main__":
         cliente = Cliente(sys.argv[1])
         cliente.conectar_servidor()
         cliente.enviar_credenciales()
-        nombre_hoja = cliente.mostrar_menu_y_elegir_hoja()
-        cliente.iniciar_interaccion(nombre_hoja)
+        hoja_id = cliente.mostrar_menu_y_elegir_hoja()
+        cliente.iniciar_thread_cliente(hoja_id)
