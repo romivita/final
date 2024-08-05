@@ -1,317 +1,335 @@
 import csv
-import json
+import hashlib
 import os
+import queue
 import signal
 import socket
-import sqlite3
-import time
-from queue import Queue
-from threading import Thread, Lock
+import sys
+import threading
 
+from comunicacion import Comunicacion
 from config_util import cargar_configuracion
-from database_util import (inicializar_base_datos, verificar_credenciales, obtener_hojas_usuario,
-                           crear_hoja_en_base_de_datos, hoja_existe_en_base_de_datos, compartir_hoja, usuario_existe,
-                           crear_usuario)
-from utils import celda_a_indices, safe_eval
+from database_util import query_db
+from utils import celda_a_indices
 
 
 class Servidor:
     def __init__(self):
         self.host, self.port = cargar_configuracion()
-        self.clientes = []
-        self.hojas_de_calculo_dict = {}
-        self.usuarios_hojas_compartidas = {}
-        self.cola = Queue(maxsize=100)
-        self.lock = Lock()
-        self.socket_servidor = self.inicializar_socket()
-        self.crear_directorio_hojas_de_calculo()
-        self.escritor_thread = Thread(target=self.procesar_cola)
-        self.escritor_thread.start()
-        inicializar_base_datos()
-        signal.signal(signal.SIGINT, self.manejar_sigint)
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock.bind((self.host, self.port))
+        self.sock.listen(5)
+        self.hilos = []
+        self.clientes_conectados = {}
+        self.hojas_clientes = {}
+        self.cola_ediciones = queue.Queue()
+        self.lock = threading.Lock()
+        print(f"Servidor iniciado en {self.host}:{self.port}")
 
-    def inicializar_socket(self):
-        try:
-            socket_servidor = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            socket_servidor.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            socket_servidor.bind((self.host, self.port))
-            return socket_servidor
-        except Exception as e:
-            print(f"Error al inicializar el socket: {e}")
-            raise
+        self.directorio_archivos = 'hojas_de_calculo'
+        if not os.path.exists(self.directorio_archivos):
+            os.makedirs(self.directorio_archivos)
 
-    def crear_directorio_hojas_de_calculo(self):
-        ruta_directorio = os.path.abspath(os.path.join(os.path.dirname(__file__), 'hojas_de_calculo'))
-        if not os.path.exists(ruta_directorio):
-            os.makedirs(ruta_directorio)
-            print(f"Directorio {ruta_directorio} creado.")
+        signal.signal(signal.SIGINT, self.terminar_servidor)
 
-    def procesar_cola(self):
-        while True:
-            try:
-                nombre_hoja, celda, valor = self.cola.get()
-                if valor.startswith('='):
-                    try:
-                        valor = str(safe_eval(valor[1:]))
-                    except Exception as e:
-                        valor = f"Error: {e}"
-                fila, columna = celda_a_indices(celda)
-                self.hojas_de_calculo_dict.setdefault(nombre_hoja, {})[(fila, columna)] = valor
-                self.guardar_en_csv(nombre_hoja)
-                self.notificar_clientes(nombre_hoja, celda, valor)
-                self.cola.task_done()
-            except Exception as e:
-                print(f"Error procesando la cola: {e}")
-            time.sleep(0.1)
+        hilo_procesar_cola = threading.Thread(target=self.procesar_cola_ediciones, daemon=True)
+        hilo_procesar_cola.start()
 
-    def gestionar_cliente(self, cliente_socket, cliente_address):
-        print(f"Conexión establecida con {cliente_address}")
-        self.clientes.append((cliente_socket, cliente_address))
-        try:
-            self.loop_cliente(cliente_socket)
-        finally:
-            cliente_socket.close()
-            self.clientes.remove((cliente_socket, cliente_address))
-            for user in self.usuarios_hojas_compartidas.values():
-                if cliente_socket in user:
-                    user.remove(cliente_socket)
-            print(f"Conexión cerrada con {cliente_address}")
-
-    def loop_cliente(self, cliente_socket):
-        try:
-            data = cliente_socket.recv(4096).decode()
-            if not data:
-                return
-
-            mensaje = json.loads(data)
-            usuario = mensaje.get("usuario")
-            if not usuario:
-                self.enviar_error(cliente_socket, "Usuario no proporcionado")
-                return
-
-            usuario_id = usuario_existe(usuario)
-            if usuario_id:
-                cliente_socket.sendall(json.dumps({"status": "existe"}).encode())
-                data = cliente_socket.recv(4096).decode()
-                if not data:
-                    return
-                mensaje = json.loads(data)
-                pwd = mensaje.get("pwd")
-                if not pwd:
-                    self.enviar_error(cliente_socket, "Contraseña no proporcionada")
-                    return
-
-                usuario_id = verificar_credenciales(usuario, pwd)
-                if not usuario_id:
-                    self.enviar_error(cliente_socket, "Credenciales inválidas")
-                    return
-
-                hojas_usuario = obtener_hojas_usuario(usuario_id)
-                cliente_socket.sendall(json.dumps({"status": "OK", "hojas": hojas_usuario}).encode())
-            else:
-                cliente_socket.sendall(json.dumps({"status": "no_existe"}).encode())
-                data = cliente_socket.recv(4096).decode()
-                if not data:
-                    return
-                mensaje = json.loads(data)
-                if mensaje.get("crear_nuevo_usuario"):
-                    pwd_hash = mensaje.get("pwd")
-                    if pwd_hash:
-                        try:
-                            usuario_id = crear_usuario(usuario, pwd_hash)
-                            if usuario_id:
-                                cliente_socket.sendall(json.dumps({"status": "nuevo_usuario_creado"}).encode())
-                                hojas_usuario = obtener_hojas_usuario(usuario_id)
-                                cliente_socket.sendall(json.dumps({"status": "OK", "hojas": hojas_usuario}).encode())
-                            else:
-                                self.enviar_error(cliente_socket, "Error al crear el usuario")
-                        except Exception as e:
-                            self.enviar_error(cliente_socket, f"Error al crear el usuario: {e}")
-                    else:
-                        self.enviar_error(cliente_socket, "Contraseña no proporcionada para el nuevo usuario")
-                else:
-                    self.enviar_error(cliente_socket, "Solicitud de creación de usuario no válida")
-                return
-
-            while True:
-                data = cliente_socket.recv(4096).decode()
-                if not data:
-                    break
-
+    def procesar_mensaje(self, mensaje, conn):
+        if mensaje['accion'] == 'iniciar_sesion':
+            respuesta = self.iniciar_sesion(mensaje)
+            if respuesta.get('status') == 'ok':
+                self.lock.acquire()
                 try:
-                    mensaje = json.loads(data)
-                    opcion = mensaje.get("opcion", None)
-                    nombre_hoja = mensaje.get("nombre_hoja", None)
+                    self.clientes_conectados[conn] = respuesta['usuario_id']
+                finally:
+                    self.lock.release()
+            return respuesta
+        elif mensaje['accion'] == 'crear_hoja':
+            respuesta = self.crear_hoja(mensaje)
+            if respuesta.get('status') == 'ok':
+                self.actualizar_mapeo_hojas(mensaje['creador_id'], conn, respuesta['hoja_id'])
+            return respuesta
+        elif mensaje['accion'] == 'listar_hojas':
+            return self.listar_hojas(mensaje)
+        elif mensaje['accion'] == 'obtener_hoja_id':
+            return self.obtener_hoja_id(mensaje)
+        elif mensaje['accion'] == 'editar_hoja':
+            hoja_id = mensaje['hoja_id']
+            celda = mensaje['celda']
+            valor = mensaje['valor']
+            usuario_id = mensaje['usuario_id']
+            self.cola_ediciones.put((hoja_id, celda, valor, usuario_id))
+            self.actualizar_mapeo_hojas(usuario_id, conn, hoja_id)
+            return {"status": "ok"}
+        elif mensaje['accion'] == 'compartir_hoja':
+            return self.compartir_hoja(mensaje)
+        elif mensaje['accion'] == 'ver_hoja':
+            respuesta = self.ver_hoja(mensaje, conn)
+            if respuesta.get('status') == 'ok':
+                self.actualizar_mapeo_hojas(mensaje['usuario_id'], conn, mensaje['hoja_id'])
+            return respuesta
+        elif mensaje['accion'] == 'desconectar':
+            return {"status": "ok", "mensaje": "Desconectado"}
+        return {"status": "error", "mensaje": "Acción no válida"}
 
-                    if opcion:
-                        if opcion == "nueva":
-                            self.inicializar_hoja(nombre_hoja, usuario_id)
-                            self.importar_csv_a_dict(nombre_hoja)
-                            self.enviar_hoja_completa(cliente_socket, nombre_hoja)
-                            self.asignar_permisos_cliente_dict(cliente_socket, nombre_hoja)
-                        elif opcion == "existente":
-                            if hoja_existe_en_base_de_datos(nombre_hoja, usuario_id):
-                                self.importar_csv_a_dict(nombre_hoja)
-                                self.enviar_hoja_completa(cliente_socket, nombre_hoja)
-                                self.asignar_permisos_cliente_dict(cliente_socket, nombre_hoja)
-                            else:
-                                self.enviar_error(cliente_socket, "La hoja de cálculo no existe")
-                        elif opcion == "compartir":
-                            usuario_compartido = mensaje.get("usuario_compartido", None)
-                            if usuario_compartido:
-                                self.compartir_hoja(nombre_hoja, usuario_compartido, usuario_id, cliente_socket)
-                            else:
-                                self.enviar_error(cliente_socket, "Falta el usuario con quien compartir")
-                        elif opcion == "descargar":
-                            self.enviar_csv(cliente_socket, nombre_hoja)
-                        elif opcion == "registrar":
-                            self.asignar_permisos_cliente_dict(cliente_socket, nombre_hoja)
-                        else:
-                            self.enviar_error(cliente_socket, "Opción no válida")
-                    else:
-                        if 'nombre_hoja' in mensaje and 'celda' in mensaje and 'valor' in mensaje:
-                            nombre_hoja = mensaje.get("nombre_hoja")
-                            celda = mensaje.get("celda")
-                            valor = mensaje.get("valor", "")
-                            fila, columna = celda_a_indices(celda)
-                            valor = f"{valor}({usuario})"
-                            self.cola.put((nombre_hoja, celda, valor))
-                        else:
-                            self.enviar_error(cliente_socket, "Formato de mensaje incorrecto")
-                except json.JSONDecodeError as e:
-                    self.enviar_error(cliente_socket, f"Formato de mensaje JSON no válido: {e}")
-                except ValueError as e:
-                    self.enviar_error(cliente_socket, f"Valor inválido: {e}")
-                except sqlite3.Error as e:
-                    self.enviar_error(cliente_socket, f"Error en la base de datos: {e}")
-                except Exception as e:
-                    self.enviar_error(cliente_socket, f"Error desconocido: {e}")
-        except Exception as e:
-            self.enviar_error(cliente_socket, f"Error desconocido en la conexión: {e}")
-            return
+    def iniciar_sesion(self, mensaje):
+        usuario = mensaje['usuario']
+        pwd = mensaje['pwd']
+        usuario_db = query_db('SELECT * FROM usuarios WHERE usuario=?', (usuario,), one=True)
+        if usuario_db:
+            pwd_hash = hashlib.sha256(pwd.encode()).hexdigest()
+            if usuario_db[2] == pwd_hash:
+                return {"status": "ok", "mensaje": "Inicio de sesión exitoso", "usuario_id": usuario_db[0]}
+            else:
+                return {"status": "error", "mensaje": "Contraseña incorrecta"}
+        else:
+            pwd_hash = hashlib.sha256(pwd.encode()).hexdigest()
+            query_db('INSERT INTO usuarios (usuario, pwd_hash) VALUES (?, ?)', (usuario, pwd_hash))
+            usuario_db = query_db('SELECT * FROM usuarios WHERE usuario=?', (usuario,), one=True)
+            return {"status": "ok", "mensaje": "Cuenta creada", "usuario_id": usuario_db[0]}
 
-    def enviar_csv(self, cliente_socket, nombre_hoja):
-        ruta_csv = os.path.abspath(os.path.join(os.path.dirname(__file__), 'hojas_de_calculo', f"{nombre_hoja}.csv"))
-        try:
-            archivo = open(ruta_csv, "r")
+    def crear_hoja(self, mensaje):
+        hoja_existente = query_db('SELECT id FROM hojas_calculo WHERE nombre=? AND creador_id=?',
+                                  (mensaje['nombre'], mensaje['creador_id']), one=True)
+        if hoja_existente:
+            return {"status": "error", "mensaje": "Hoja con ese nombre ya existe"}
+
+        query_db('INSERT INTO hojas_calculo (nombre, creador_id) VALUES (?, ?)',
+                 (mensaje['nombre'], mensaje['creador_id']))
+
+        hoja_nueva = query_db('SELECT id FROM hojas_calculo WHERE nombre=? AND creador_id=?',
+                              (mensaje['nombre'], mensaje['creador_id']), one=True)
+
+        hoja_id = hoja_nueva[0]
+        archivo_csv = os.path.join(self.directorio_archivos, f'{hoja_id}.csv')
+        if not os.path.exists(archivo_csv):
+            archivo = open(archivo_csv, 'w', newline='')
             try:
-                contenido = archivo.read()
-                mensaje = json.dumps({"csv": contenido})
-                cliente_socket.sendall(mensaje.encode())
+                writer = csv.writer(archivo)
+                writer.writerow([])
             finally:
                 archivo.close()
-        except FileNotFoundError:
-            self.enviar_error(cliente_socket, f"El archivo {nombre_hoja}.csv no existe.")
-        except Exception as e:
-            self.enviar_error(cliente_socket, f"Error al enviar el archivo {nombre_hoja}.csv: {e}")
 
-    def enviar_error(self, cliente_socket, mensaje_error):
-        mensaje = json.dumps({"error": mensaje_error})
-        try:
-            cliente_socket.sendall(mensaje.encode())
-        except Exception as e:
-            print(f"Error enviando mensaje de error al cliente: {e}")
+        return {"status": "ok", "mensaje": "Hoja creada", "hoja_id": hoja_id}
 
-    def inicializar_hoja(self, nombre_hoja, usuario_id):
-        if hoja_existe_en_base_de_datos(nombre_hoja, usuario_id):
-            if nombre_hoja not in self.hojas_de_calculo_dict:
-                self.hojas_de_calculo_dict[nombre_hoja] = {}
+    def listar_hojas(self, mensaje):
+        usuario_id = mensaje['creador_id']
+
+        hojas_creadas = query_db('''
+            SELECT hc.*, u.usuario 
+            FROM hojas_calculo hc 
+            JOIN usuarios u ON hc.creador_id = u.id 
+            WHERE hc.creador_id = ?
+        ''', (usuario_id,))
+
+        hojas_lectura_escritura = query_db('''
+            SELECT hc.*, u.usuario 
+            FROM hojas_calculo hc
+            JOIN permisos p ON hc.id = p.hoja_id
+            JOIN usuarios u ON hc.creador_id = u.id
+            WHERE p.usuario_id = ? AND p.permisos = 'lectura y escritura'
+        ''', (usuario_id,))
+
+        hojas_lectura = query_db('''
+            SELECT hc.*, u.usuario 
+            FROM hojas_calculo hc
+            JOIN permisos p ON hc.id = p.hoja_id
+            JOIN usuarios u ON hc.creador_id = u.id
+            WHERE p.usuario_id = ? AND p.permisos = 'solo lectura'
+        ''', (usuario_id,))
+
+        return {"status": "ok", "hojas_creadas": hojas_creadas, "hojas_lectura_escritura": hojas_lectura_escritura,
+                "hojas_lectura": hojas_lectura}
+
+    def obtener_hoja_id(self, mensaje):
+        nombre_hoja = mensaje['nombre']
+        usuario_id = mensaje['usuario_id']
+
+        hoja = query_db('SELECT id FROM hojas_calculo WHERE nombre=? AND creador_id=?', (nombre_hoja, usuario_id),
+                        one=True)
+
+        if not hoja:
+            hoja = query_db('''
+                SELECT hc.id FROM hojas_calculo hc
+                JOIN permisos p ON hc.id = p.hoja_id
+                WHERE hc.nombre=? AND p.usuario_id=?
+            ''', (nombre_hoja, usuario_id), one=True)
+
+        if hoja:
+            return {"status": "ok", "hoja_id": hoja[0]}
         else:
-            try:
-                crear_hoja_en_base_de_datos(nombre_hoja, usuario_id)
-                self.hojas_de_calculo_dict[nombre_hoja] = {}
-                self.guardar_en_csv(nombre_hoja)
-            except Exception as e:
-                raise ValueError(
-                    f"No se pudo crear la hoja de cálculo '{nombre_hoja}' para el usuario ID '{usuario_id}': {e}")
+            return {"status": "error", "mensaje": "Hoja no encontrada"}
 
-    def importar_csv_a_dict(self, nombre_hoja):
-        ruta_archivo = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), 'hojas_de_calculo', f"{nombre_hoja}.csv"))
-        if os.path.exists(ruta_archivo):
-            file = open(ruta_archivo, "r", newline='')
-            try:
-                reader = csv.reader(file)
-                for fila_idx, fila in enumerate(reader, start=1):
-                    for col_idx, valor in enumerate(fila, start=1):
-                        if valor:
-                            self.hojas_de_calculo_dict.setdefault(nombre_hoja, {})[(fila_idx, col_idx)] = valor
-            finally:
-                file.close()
+    def compartir_hoja(self, mensaje):
+        hoja_id = mensaje['hoja_id']
+        nombre_usuario = mensaje['nombre_usuario']
+        permisos = mensaje['permisos']
 
-    def guardar_en_csv(self, nombre_hoja):
-        if nombre_hoja not in self.hojas_de_calculo_dict:
-            return
+        usuario = query_db('SELECT id FROM usuarios WHERE usuario=?', (nombre_usuario,), one=True)
+        if not usuario:
+            return {"status": "error", "mensaje": "Usuario no encontrado"}
 
-        filas_max = max(fila for fila, _ in self.hojas_de_calculo_dict[nombre_hoja]) if self.hojas_de_calculo_dict[
-            nombre_hoja] else 0
-        columnas_max = max(columna for _, columna in self.hojas_de_calculo_dict[nombre_hoja]) if \
-            self.hojas_de_calculo_dict[nombre_hoja] else 0
+        usuario_id = usuario[0]
 
-        ruta_csv = os.path.abspath(os.path.join(os.path.dirname(__file__), 'hojas_de_calculo', f"{nombre_hoja}.csv"))
-        file = open(ruta_csv, "w", newline='')
+        hoja = query_db('SELECT creador_id FROM hojas_calculo WHERE id=?', (hoja_id,), one=True)
+        if not hoja:
+            return {"status": "error", "mensaje": "Hoja no encontrada"}
+
+        creador_id = hoja[0]
+        if creador_id == usuario_id:
+            return {"status": "error", "mensaje": "No puedes compartir la hoja contigo mismo"}
+
+        query_db('INSERT OR REPLACE INTO permisos (hoja_id, usuario_id, permisos) VALUES (?, ?, ?)',
+                 (hoja_id, usuario_id, permisos))
+        return {"status": "ok", "mensaje": "Hoja compartida exitosamente"}
+
+    def ver_hoja(self, mensaje, conn):
+        hoja_id = mensaje['hoja_id']
+        usuario_id = mensaje['usuario_id']
+
+        creador = query_db('SELECT creador_id FROM hojas_calculo WHERE id=?', (hoja_id,), one=True)
+        if creador and creador[0] == usuario_id:
+            permisos_usuario = 'lectura y escritura'
+        else:
+            permisos = query_db('SELECT permisos FROM permisos WHERE hoja_id=? AND usuario_id=?', (hoja_id, usuario_id),
+                                one=True)
+            permisos_usuario = permisos[0] if permisos else None
+
+        if not permisos_usuario:
+            return {"status": "error", "mensaje": "No tienes permisos para ver esta hoja"}
+
+        archivo_csv = os.path.join(self.directorio_archivos, f'{hoja_id}.csv')
+
+        if not os.path.exists(archivo_csv):
+            return {"status": "error", "mensaje": "Archivo de hoja de cálculo no encontrado"}
+
+        datos = []
+
+        archivo = open(archivo_csv, 'r', newline='')
         try:
-            writer = csv.writer(file)
-            for fila in range(1, filas_max + 1):
-                fila_datos = [self.hojas_de_calculo_dict[nombre_hoja].get((fila, columna), "") for columna in
-                              range(1, columnas_max + 1)]
-                writer.writerow(fila_datos)
+            lector = csv.reader(archivo)
+            datos = list(lector)
+        except Exception as e:
+            print(f"Error al leer el archivo CSV: {e}")
         finally:
-            file.close()
+            archivo.close()
 
-    def enviar_hoja_completa(self, cliente_socket, nombre_hoja):
+        return {"status": "ok", "datos": datos, "permisos": permisos_usuario}
+
+    def actualizar_mapeo_hojas(self, usuario_id, conn, hoja_id):
         self.lock.acquire()
         try:
-            hoja = self.hojas_de_calculo_dict.get(nombre_hoja, {})
-            filas_max = max(fila for fila, _ in hoja) if hoja else 0
-            columnas_max = max(columna for _, columna in hoja) if hoja else 0
-
-            datos = []
-            for fila in range(1, filas_max + 1):
-                fila_datos = [hoja.get((fila, columna), "") for columna in range(1, columnas_max + 1)]
-                datos.append(fila_datos)
+            if hoja_id not in self.hojas_clientes:
+                self.hojas_clientes[hoja_id] = set()
+            if conn not in self.hojas_clientes[hoja_id]:
+                self.hojas_clientes[hoja_id].add(conn)
         finally:
             self.lock.release()
 
-        mensaje = json.dumps(datos)
-        cliente_socket.sendall(mensaje.encode())
+    def aplicar_edicion(self, hoja_id, celda, valor):
+        archivo_csv = os.path.join(self.directorio_archivos, f'{hoja_id}.csv')
 
-    def asignar_permisos_cliente_dict(self, cliente_socket, nombre_hoja):
-        if nombre_hoja not in self.usuarios_hojas_compartidas:
-            self.usuarios_hojas_compartidas[nombre_hoja] = []
-        if cliente_socket not in self.usuarios_hojas_compartidas[nombre_hoja]:
-            self.usuarios_hojas_compartidas[nombre_hoja].append(cliente_socket)
+        if not os.path.exists(archivo_csv):
+            return {"status": "error", "mensaje": "Archivo de hoja de cálculo no encontrado"}
 
-    def notificar_clientes(self, nombre_hoja, celda, valor):
-        if nombre_hoja in self.usuarios_hojas_compartidas:
-            mensaje = json.dumps({"nombre_hoja": nombre_hoja, "celda": celda, "valor": valor})
-            for cliente_socket in self.usuarios_hojas_compartidas[nombre_hoja]:
+        try:
+            archivo = open(archivo_csv, 'r', newline='')
+            try:
+                lector = csv.reader(archivo)
+                datos = list(lector)
+                indices = celda_a_indices(celda)
+
+                if indices[0] >= len(datos):
+                    datos.extend([[] for _ in range(indices[0] - len(datos) + 1)])
+                if indices[1] >= len(datos[indices[0]]):
+                    datos[indices[0]].extend([''] * (indices[1] - len(datos[indices[0]]) + 1))
+                datos[indices[0]][indices[1]] = valor
+            except Exception as e:
+                print(f"Error al leer el archivo CSV: {e}")
+            finally:
+                archivo.close()
+
+            archivo = open(archivo_csv, 'w', newline='')
+            try:
+                escritor = csv.writer(archivo)
+                escritor.writerows(datos)
+            except Exception as e:
+                print(f"Error al escribir en el archivo CSV: {e}")
+            finally:
+                archivo.close()
+
+            return {"status": "ok"}
+        except Exception as e:
+            return {"status": "error", "mensaje": f"Error al aplicar edición: {e}"}
+
+    def notificar_actualizacion(self, hoja_id, celda, valor, usuario_id):
+        mensaje_actualizacion = {"accion": "actualizacion", "hoja_id": hoja_id, "celda": celda, "valor": valor,
+                                 "usuario_id": usuario_id}
+        if hoja_id in self.hojas_clientes:
+            for conn in self.hojas_clientes[hoja_id]:
                 try:
-                    cliente_socket.sendall(mensaje.encode())
+                    Comunicacion.enviar(mensaje_actualizacion, conn)
                 except Exception as e:
-                    print(f"Error notificando al cliente: {e}")
+                    print(f"Error al enviar notificación a {conn}: {e}")
 
-    def compartir_hoja(self, nombre_hoja, usuario_compartido, usuario_id, cliente_socket):
-        resultado = compartir_hoja(nombre_hoja, usuario_compartido, usuario_id)
-        if "error" in resultado:
-            self.enviar_error(cliente_socket, resultado["error"])
-        else:
-            cliente_socket.sendall(json.dumps({"status": "OK"}).encode())
-
-    def iniciar_servidor(self):
-        self.socket_servidor.listen(5)
-        print("Servidor escuchando en", (self.host, self.port))
+    def procesar_cola_ediciones(self):
         while True:
-            cliente_socket, cliente_address = self.socket_servidor.accept()
-            cliente_thread = Thread(target=self.gestionar_cliente, args=(cliente_socket, cliente_address))
-            cliente_thread.start()
+            hoja_id, celda, valor, usuario_id = self.cola_ediciones.get()
+            resultado = self.aplicar_edicion(hoja_id, celda, valor)
+            if resultado["status"] == "ok":
+                self.notificar_actualizacion(hoja_id, celda, valor, usuario_id)
+            self.cola_ediciones.task_done()
 
-    def manejar_sigint(self, signum, frame):
-        print("\nTerminando el servidor...")
-        self.socket_servidor.close()
-        os._exit(0)
+    def manejar_cliente(self, conn, addr):
+        print(f"Conexión desde {addr}")
+        self.lock.acquire()
+        try:
+            self.clientes_conectados[conn] = addr
+        finally:
+            self.lock.release()
+
+        try:
+            while True:
+                mensaje = Comunicacion.recibir(conn)
+                if not mensaje:
+                    break
+                print(conn)
+                respuesta = self.procesar_mensaje(mensaje, conn)
+                Comunicacion.enviar(respuesta, conn)
+
+                if mensaje['accion'] == 'desconectar':
+                    break
+        finally:
+            conn.close()
+            self.lock.acquire()
+            try:
+                del self.clientes_conectados[conn]
+                for hoja_id in list(self.hojas_clientes.keys()):
+                    if conn in self.hojas_clientes[hoja_id]:
+                        self.hojas_clientes[hoja_id].remove(conn)
+                        if not self.hojas_clientes[hoja_id]:
+                            del self.hojas_clientes[hoja_id]
+            finally:
+                self.lock.release()
+
+    def iniciar(self):
+        print("Servidor iniciado, esperando conexiones...")
+        while True:
+            conn, addr = self.sock.accept()
+            hilo_cliente = threading.Thread(target=self.manejar_cliente, args=(conn, addr))
+            hilo_cliente.start()
+            self.hilos.append(hilo_cliente)
+
+    def terminar_servidor(self, sig, frame):
+        print("Terminando servidor...")
+        self.sock.close()
+        for hilo in self.hilos:
+            hilo.join()
+        sys.exit(0)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     servidor = Servidor()
-    servidor.iniciar_servidor()
+    servidor.iniciar()

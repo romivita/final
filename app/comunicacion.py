@@ -1,20 +1,29 @@
-import socket
+import json
 
 
 class Comunicacion:
-    def __init__(self, host, port):
-        self.host = host
-        self.port = port
-        self.socket_cliente = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    @staticmethod
+    def enviar(mensaje, conn):
+        try:
+            mensaje_json = json.dumps(mensaje)
+            print(f"Mensaje JSON a enviar: {mensaje_json}")
+            conn.sendall(mensaje_json.encode('utf-8'))
+        except Exception as e:
+            print(f"Error al enviar el mensaje JSON: {e}")
+            raise
 
-    def conectar(self):
-        self.socket_cliente.connect((self.host, self.port))
-
-    def enviar_datos(self, datos):
-        self.socket_cliente.sendall(datos.encode('utf-8'))
-
-    def recibir_datos(self):
-        return self.socket_cliente.recv(4096).decode('utf-8')
-
-    def cerrar_conexion(self):
-        self.socket_cliente.close()
+    @staticmethod
+    def recibir(conn):
+        try:
+            buffer_size = 4096
+            data = conn.recv(buffer_size)
+            if not data:
+                print("No se recibieron datos.")
+                return None
+            mensaje_json = data.decode('utf-8')
+            print(f"Mensaje recibido: {mensaje_json}")
+            mensaje = json.loads(mensaje_json)
+            return mensaje
+        except Exception as e:
+            print(f"Error al recibir el mensaje: {e}")
+            return None
