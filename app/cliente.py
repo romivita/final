@@ -16,7 +16,14 @@ class Cliente:
         self.usuario = usuario
         self.host, self.port = cargar_configuracion()
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.connect((self.host, self.port))
+
+        try:
+            self.sock.connect((self.host, self.port))
+        except ConnectionRefusedError:
+            sys.exit(
+                f"No se pudo conectar al servidor en {self.host}:{self.port}."
+                f"\nAsegurate de que el servidor este corriendo e intentalo nuevamente.")
+
         self.usuario_id = self.autenticar_usuario()
         self.hojas = []
         self.hoja_editada = None
@@ -32,7 +39,7 @@ class Cliente:
         if respuesta["status"] == "ok":
             return respuesta["usuario_id"]
         else:
-            sys.exit("Error de autenticación. Saliendo...")
+            sys.exit("Error de autenticacion. Saliendo...")
 
     def crear_hoja(self, nombre):
         mensaje = {"accion": "crear_hoja", "nombre": nombre, "creador_id": self.usuario_id}
@@ -56,7 +63,7 @@ class Cliente:
                 tabla_hojas = [[i + 1, hoja[1], hoja[-1]] for i, hoja in enumerate(hojas)]
                 print(tabulate(tabla_hojas, headers, tablefmt="github"))
             else:
-                print("No tienes hojas de cálculo.")
+                print("No tienes hojas de calculo.")
         else:
             print(respuesta["mensaje"])
 
@@ -77,11 +84,9 @@ class Cliente:
         try:
             while True:
                 try:
-                    celda = input("Celda (o 'salir' para terminar): ").strip().upper()
-                    if celda.lower() == 'salir':
-                        break
+                    celda = input("Celda: ").strip().upper()
                     if not re.match(r'^[a-zA-Z]+\d+$', celda):
-                        print("Formato de celda no válido. Intenta de nuevo.")
+                        print("Formato de celda no valido. Intenta de nuevo.")
                         continue
                     valor = input("Valor: ").strip()
                     valor_evaluado = evaluar_expresion(valor)
@@ -89,12 +94,12 @@ class Cliente:
                                "usuario_id": self.usuario_id}
                     Comunicacion.enviar(mensaje, self.sock)
                 except KeyboardInterrupt:
-                    print("\nEdición de hoja finalizada.")
+                    print("\nEdicion de hoja finalizada.")
                     break
                 except Exception as e:
                     print(f"Error: {e}")
         except KeyboardInterrupt:
-            print("\nEdición de hoja finalizada. Desconectando...")
+            print("\nEdicion de hoja finalizada. Desconectando...")
         finally:
             self.stop_event.set()
             hilo_actualizaciones.join()
@@ -103,21 +108,21 @@ class Cliente:
     def compartir_hoja(self):
         hojas_creadas = [hoja for hoja in self.hojas if hoja[2] == self.usuario_id]
         if not hojas_creadas:
-            print("No tienes hojas de cálculo propias para compartir.")
+            print("No tienes hojas de calculo propias para compartir.")
             return
-        print("Selecciona la hoja de cálculo que deseas compartir:")
+        print("Selecciona la hoja de calculo que deseas compartir:")
         for i, hoja in enumerate(hojas_creadas):
             print(f"{i + 1}. {hoja[1]}")
         opcion_hoja = int(input("Selecciona una hoja: ")) - 1
         if opcion_hoja < 0 or opcion_hoja >= len(hojas_creadas):
-            print("Opción no válida.")
+            print("Opcion no valida.")
             return
         hoja_id = hojas_creadas[opcion_hoja][0]
         nombre_usuario = input("Nombre del usuario con quien compartir: ")
         print("Selecciona el permiso que deseas otorgar:")
         print("1. Solo lectura")
         print("2. Lectura y escritura")
-        opcion_permiso = input("Selecciona una opción: ")
+        opcion_permiso = input("Selecciona una opcion: ")
         permisos = "lectura y escritura" if opcion_permiso == '2' else "solo lectura"
         mensaje = {"accion": "compartir_hoja", "hoja_id": hoja_id, "nombre_usuario": nombre_usuario,
                    "permisos": permisos}
@@ -137,10 +142,10 @@ class Cliente:
                 columnas = [""] + [chr(65 + i) for i in range(num_columnas)]
                 for i, fila in enumerate(datos):
                     datos[i] = [str(i + 1)] + fila
-                print("Contenido de la hoja de cálculo:")
+                print("Contenido de la hoja de calculo:")
                 print(tabulate(datos, headers=columnas, tablefmt="github"))
             else:
-                print("La hoja de cálculo está vacía.")
+                print("La hoja de calculo esta vacia.")
             return respuesta.get("permisos", "solo lectura")
         else:
             print(respuesta["mensaje"])
@@ -157,7 +162,7 @@ class Cliente:
                     usuario_id = respuesta.get("usuario_id")
                     if hoja_id == self.hoja_editada:
                         print(
-                            f"\nActualización recibida en hoja {hoja_id}: Celda {celda} = {valor} (Usuario ID: {usuario_id})")
+                            f"\nActualizacion recibida en hoja {hoja_id}: Celda {celda} = {valor} (Usuario ID: {usuario_id})")
             except Exception as e:
                 if self.stop_event.is_set():
                     break
@@ -168,7 +173,7 @@ class Cliente:
             mensaje = {"accion": "desconectar"}
             Comunicacion.enviar(mensaje, self.sock)
         except Exception as e:
-            print(f"Error al enviar mensaje de desconexión: {e}")
+            print(f"Error al enviar mensaje de desconexion: {e}")
         finally:
             self.sock.close()
 
@@ -177,20 +182,20 @@ class Cliente:
             self.listar_hojas()
             while True:
                 print("\nOpciones:")
-                print("1. Crear hoja de cálculo")
-                print("2. Seleccionar una hoja de cálculo")
-                print("3. Compartir una hoja de cálculo")
-                opcion = input("Selecciona una opción: ")
+                print("1. Crear hoja de calculo")
+                print("2. Seleccionar una hoja de calculo")
+                print("3. Compartir una hoja de calculo")
+                opcion = input("Selecciona una opcion: ")
                 if opcion == '1':
-                    nombre = input("Nombre de la hoja de cálculo: ")
+                    nombre = input("Nombre de la hoja de calculo: ")
                     hoja_id = self.crear_hoja(nombre)
                     if hoja_id:
                         self.editar_hoja(hoja_id)
                 elif opcion == '2':
                     if not self.hojas:
-                        print("No tienes hojas de cálculo disponibles para editar.")
+                        print("No tienes hojas de calculo disponibles para editar.")
                     else:
-                        indice = int(input("Selecciona el número de hoja: ")) - 1
+                        indice = int(input("Selecciona el numero de hoja: ")) - 1
                         if 0 <= indice < len(self.hojas):
                             hoja_seleccionada = self.hojas[indice]
                             hoja_id = self.obtener_hoja_id(hoja_seleccionada[1])
@@ -199,14 +204,14 @@ class Cliente:
                                 if permisos in ["lectura y escritura", "creador"]:
                                     self.editar_hoja(hoja_id)
                         else:
-                            print("Opción no válida.")
+                            print("Opcion no valida.")
                 elif opcion == '3':
                     if not self.hojas:
-                        print("No tienes hojas de cálculo disponibles para compartir.")
+                        print("No tienes hojas de calculo disponibles para compartir.")
                     else:
                         self.compartir_hoja()
                 else:
-                    print("Opción no válida.")
+                    print("Opcion no valida.")
         except KeyboardInterrupt:
             print("\nSaliendo del cliente...")
         finally:

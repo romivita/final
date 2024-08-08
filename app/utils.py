@@ -3,7 +3,7 @@ import operator as op
 
 
 def letra_a_indice(letra):
-    """Convierte una letra de columna (p.ej., 'A') a un índice de columna basado en 0 (p.ej., 0)"""
+    """Convierte una letra de columna (p.ej., 'A') a un indice de columna basado en 0 (p.ej., 0)"""
     indice = 0
     for caracter in letra:
         if 'A' <= caracter <= 'Z':
@@ -12,7 +12,7 @@ def letra_a_indice(letra):
 
 
 def celda_a_indices(celda):
-    """Convierte una referencia de celda (p.ej., 'A1') a índices de fila y columna (p.ej., (0, 0))"""
+    """Convierte una referencia de celda (p.ej., 'A1') a indices de fila y columna (p.ej., (0, 0))"""
     columna_letras = ''.join(filter(str.isalpha, celda)).upper()
     fila_numeros = ''.join(filter(str.isdigit, celda))
     columna = letra_a_indice(columna_letras)
@@ -50,7 +50,7 @@ def evaluar_expresion(expresion):
 
             return eval_ast(tree.body)
         except Exception as e:
-            print(f"Error al evaluar la expresión: {e}")
+            print(f"Error al evaluar la expresion: {e}")
             return f"={expresion}"
     else:
         return expresion

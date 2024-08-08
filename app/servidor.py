@@ -72,7 +72,7 @@ class Servidor:
             return respuesta
         elif mensaje['accion'] == 'desconectar':
             return {"status": "ok", "mensaje": "Desconectado"}
-        return {"status": "error", "mensaje": "Acción no válida"}
+        return {"status": "error", "mensaje": "Accion no valida"}
 
     def iniciar_sesion(self, mensaje):
         usuario = mensaje['usuario']
@@ -81,7 +81,7 @@ class Servidor:
         if usuario_db:
             pwd_hash = hashlib.sha256(pwd.encode()).hexdigest()
             if usuario_db[2] == pwd_hash:
-                return {"status": "ok", "mensaje": "Inicio de sesión exitoso", "usuario_id": usuario_db[0]}
+                return {"status": "ok", "mensaje": "Inicio de sesion exitoso", "usuario_id": usuario_db[0]}
             else:
                 return {"status": "error", "mensaje": "Contraseña incorrecta"}
         else:
@@ -203,7 +203,7 @@ class Servidor:
         archivo_csv = os.path.join(self.directorio_archivos, f'{hoja_id}.csv')
 
         if not os.path.exists(archivo_csv):
-            return {"status": "error", "mensaje": "Archivo de hoja de cálculo no encontrado"}
+            return {"status": "error", "mensaje": "Archivo de hoja de calculo no encontrado"}
 
         datos = []
 
@@ -232,7 +232,7 @@ class Servidor:
         archivo_csv = os.path.join(self.directorio_archivos, f'{hoja_id}.csv')
 
         if not os.path.exists(archivo_csv):
-            return {"status": "error", "mensaje": "Archivo de hoja de cálculo no encontrado"}
+            return {"status": "error", "mensaje": "Archivo de hoja de calculo no encontrado"}
 
         try:
             archivo = open(archivo_csv, 'r', newline='')
@@ -262,7 +262,7 @@ class Servidor:
 
             return {"status": "ok"}
         except Exception as e:
-            return {"status": "error", "mensaje": f"Error al aplicar edición: {e}"}
+            return {"status": "error", "mensaje": f"Error al aplicar edicion: {e}"}
 
     def notificar_actualizacion(self, hoja_id, celda, valor, usuario_id):
         mensaje_actualizacion = {"accion": "actualizacion", "hoja_id": hoja_id, "celda": celda, "valor": valor,
@@ -272,7 +272,7 @@ class Servidor:
                 try:
                     Comunicacion.enviar(mensaje_actualizacion, conn)
                 except Exception as e:
-                    print(f"Error al enviar notificación a {conn}: {e}")
+                    print(f"Error al enviar notificacion a {conn}: {e}")
 
     def procesar_cola_ediciones(self):
         while True:
@@ -283,7 +283,7 @@ class Servidor:
             self.cola_ediciones.task_done()
 
     def manejar_cliente(self, conn, addr):
-        print(f"Conexión desde {addr}")
+        print(f"Conexion desde {addr}")
         self.lock.acquire()
         try:
             self.clientes_conectados[conn] = addr
