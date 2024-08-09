@@ -70,6 +70,8 @@ class Servidor:
             if respuesta.get('status') == 'ok':
                 self.actualizar_mapeo_hojas(mensaje['usuario_id'], conn, mensaje['hoja_id'])
             return respuesta
+        elif mensaje['accion'] == 'descargar_hoja':
+            return self.descargar_hoja(mensaje)
         elif mensaje['accion'] == 'desconectar':
             return {"status": "ok", "mensaje": "Desconectado"}
         return {"status": "error", "mensaje": "Accion no valida"}
@@ -217,6 +219,26 @@ class Servidor:
             archivo.close()
 
         return {"status": "ok", "datos": datos, "permisos": permisos_usuario}
+
+    def descargar_hoja(self, mensaje):
+        hoja_id = mensaje['hoja_id']
+        archivo_csv = os.path.join(self.directorio_archivos, f'{hoja_id}.csv')
+
+        if not os.path.exists(archivo_csv):
+            return {"status": "error", "mensaje": "Archivo de hoja de cálculo no encontrado"}
+
+        try:
+            archivo = open(archivo_csv, 'r', newline='')
+            try:
+                lector = csv.reader(archivo)
+                contenido = list(lector)
+                return {"status": "ok", "contenido_csv": contenido}
+            except Exception as e:
+                return {"status": "error", "mensaje": f"Error al leer el archivo CSV: {e}"}
+            finally:
+                archivo.close()
+        except Exception as e:
+            return {"status": "error", "mensaje": f"Error al abrir el archivo CSV: {e}"}
 
     def actualizar_mapeo_hojas(self, usuario_id, conn, hoja_id):
         self.lock.acquire()

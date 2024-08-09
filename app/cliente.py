@@ -1,4 +1,6 @@
+import csv
 import getpass
+import os
 import re
 import socket
 import sys
@@ -20,9 +22,8 @@ class Cliente:
         try:
             self.sock.connect((self.host, self.port))
         except ConnectionRefusedError:
-            sys.exit(
-                f"No se pudo conectar al servidor en {self.host}:{self.port}."
-                f"\nAsegurate de que el servidor este corriendo e intentalo nuevamente.")
+            sys.exit(f"No se pudo conectar al servidor en {self.host}:{self.port}."
+                     f"\nAsegurate de que el servidor este corriendo e intentalo nuevamente.")
 
         self.usuario_id = self.autenticar_usuario()
         self.hojas = []
@@ -137,9 +138,11 @@ class Cliente:
         if respuesta["status"] == "ok":
             datos = respuesta["datos"]
             if datos:
-                num_filas = len(datos)
-                num_columnas = len(datos[0]) if num_filas > 0 else 0
-                columnas = [""] + [chr(65 + i) for i in range(num_columnas)]
+                max_columnas = max(len(fila) for fila in datos)
+                for fila in datos:
+                    if len(fila) < max_columnas:
+                        fila.extend([''] * (max_columnas - len(fila)))
+                columnas = [""] + [chr(65 + i) for i in range(max_columnas)]
                 for i, fila in enumerate(datos):
                     datos[i] = [str(i + 1)] + fila
                 print("Contenido de la hoja de calculo:")
@@ -150,6 +153,29 @@ class Cliente:
         else:
             print(respuesta["mensaje"])
             return "solo lectura"
+
+    def descargar_hoja(self, hoja_nombre, hoja_id):
+        mensaje = {"accion": "descargar_hoja", "hoja_id": hoja_id}
+        Comunicacion.enviar(mensaje, self.sock)
+        respuesta = Comunicacion.recibir(self.sock)
+
+        if respuesta["status"] == "ok":
+            downloads_path = os.path.join(os.path.expanduser('~'), 'Downloads')
+            nombre_archivo = os.path.join(downloads_path, f"{hoja_nombre}.csv")
+            try:
+                archivo = open(nombre_archivo, 'w', newline='')
+                try:
+                    escritor = csv.writer(archivo)
+                    escritor.writerows(respuesta["contenido_csv"])
+                    print(f"Hoja de cálculo descargada y guardada en {nombre_archivo}")
+                except Exception as e:
+                    return {"status": "error", "mensaje": f"Error al escribir en el archivo CSV: {e}"}
+                finally:
+                    archivo.close()
+            except Exception as e:
+                return {"status": "error", "mensaje": f"Error al abrir el archivo CSV: {e}"}
+        else:
+            print(respuesta["mensaje"])
 
     def manejar_actualizaciones(self):
         while not self.stop_event.is_set():
@@ -185,6 +211,7 @@ class Cliente:
                 print("1. Crear hoja de calculo")
                 print("2. Seleccionar una hoja de calculo")
                 print("3. Compartir una hoja de calculo")
+                print("4. Descargar hoja de cálculo")
                 opcion = input("Selecciona una opcion: ")
                 if opcion == '1':
                     nombre = input("Nombre de la hoja de calculo: ")
@@ -204,12 +231,24 @@ class Cliente:
                                 if permisos in ["lectura y escritura", "creador"]:
                                     self.editar_hoja(hoja_id)
                         else:
-                            print("Opcion no valida.")
+                            print("Selección no válida.")
                 elif opcion == '3':
                     if not self.hojas:
                         print("No tienes hojas de calculo disponibles para compartir.")
                     else:
                         self.compartir_hoja()
+                elif opcion == "4":
+                    if not self.hojas:
+                        print("No tienes hojas de calculo disponibles para editar.")
+                    else:
+                        indice = int(input("Selecciona el numero de hoja: ")) - 1
+                        if 0 <= indice < len(self.hojas):
+                            hoja_seleccionada = self.hojas[indice]
+                            hoja_id = self.obtener_hoja_id(hoja_seleccionada[1])
+                            if hoja_id:
+                                self.descargar_hoja(hoja_seleccionada[1], hoja_id)
+                        else:
+                            print("Selección no válida.")
                 else:
                     print("Opcion no valida.")
         except KeyboardInterrupt:
