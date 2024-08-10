@@ -52,7 +52,8 @@ class Servidor:
                 self.actualizar_mapeo_hojas(mensaje['creador_id'], conn, respuesta['hoja_id'])
             return respuesta
         elif mensaje['accion'] == 'listar_hojas':
-            return self.listar_hojas(mensaje)
+            usuario_id = mensaje['creador_id']
+            return self.listar_hojas(usuario_id)
         elif mensaje['accion'] == 'obtener_hoja_id':
             return self.obtener_hoja_id(mensaje)
         elif mensaje['accion'] == 'editar_hoja':
@@ -65,13 +66,17 @@ class Servidor:
             return {"status": "ok"}
         elif mensaje['accion'] == 'compartir_hoja':
             return self.compartir_hoja(mensaje)
-        elif mensaje['accion'] == 'ver_hoja':
-            respuesta = self.ver_hoja(mensaje, conn)
+        elif mensaje['accion'] == 'obtener_permisos':
+            return self.obtener_permisos(mensaje)
+        elif mensaje['accion'] == 'leer_datos_csv':
+            hoja_id = mensaje['hoja_id']
+            respuesta = self.leer_datos_csv(hoja_id)
             if respuesta.get('status') == 'ok':
                 self.actualizar_mapeo_hojas(mensaje['usuario_id'], conn, mensaje['hoja_id'])
             return respuesta
         elif mensaje['accion'] == 'descargar_hoja':
-            return self.descargar_hoja(mensaje)
+            hoja_id = mensaje['hoja_id']
+            return self.descargar_hoja(hoja_id)
         elif mensaje['accion'] == 'desconectar':
             return {"status": "ok", "mensaje": "Desconectado"}
         return {"status": "error", "mensaje": "Accion no valida"}
@@ -93,16 +98,17 @@ class Servidor:
             return {"status": "ok", "mensaje": "Cuenta creada", "usuario_id": usuario_db[0]}
 
     def crear_hoja(self, mensaje):
+        nombre_hoja = mensaje['nombre']
+        usuario_id = mensaje['creador_id']
         hoja_existente = query_db('SELECT id FROM hojas_calculo WHERE nombre=? AND creador_id=?',
-                                  (mensaje['nombre'], mensaje['creador_id']), one=True)
+                                  (nombre_hoja, usuario_id), one=True)
         if hoja_existente:
             return {"status": "error", "mensaje": "Hoja con ese nombre ya existe"}
 
-        query_db('INSERT INTO hojas_calculo (nombre, creador_id) VALUES (?, ?)',
-                 (mensaje['nombre'], mensaje['creador_id']))
+        query_db('INSERT INTO hojas_calculo (nombre, creador_id) VALUES (?, ?)', (nombre_hoja, usuario_id))
 
-        hoja_nueva = query_db('SELECT id FROM hojas_calculo WHERE nombre=? AND creador_id=?',
-                              (mensaje['nombre'], mensaje['creador_id']), one=True)
+        hoja_nueva = query_db('SELECT id FROM hojas_calculo WHERE nombre=? AND creador_id=?', (nombre_hoja, usuario_id),
+                              one=True)
 
         hoja_id = hoja_nueva[0]
         archivo_csv = os.path.join(self.directorio_archivos, f'{hoja_id}.csv')
@@ -116,9 +122,7 @@ class Servidor:
 
         return {"status": "ok", "mensaje": "Hoja creada", "hoja_id": hoja_id}
 
-    def listar_hojas(self, mensaje):
-        usuario_id = mensaje['creador_id']
-
+    def listar_hojas(self, usuario_id):
         hojas_creadas = query_db('''
             SELECT hc.*, u.usuario 
             FROM hojas_calculo hc 
@@ -187,41 +191,43 @@ class Servidor:
                  (hoja_id, usuario_id, permisos))
         return {"status": "ok", "mensaje": "Hoja compartida exitosamente"}
 
-    def ver_hoja(self, mensaje, conn):
+    def obtener_permisos(self, mensaje):
         hoja_id = mensaje['hoja_id']
         usuario_id = mensaje['usuario_id']
 
         creador = query_db('SELECT creador_id FROM hojas_calculo WHERE id=?', (hoja_id,), one=True)
         if creador and creador[0] == usuario_id:
-            permisos_usuario = 'lectura y escritura'
+            return {"status": "ok", "permisos": 'lectura y escritura'}
         else:
             permisos = query_db('SELECT permisos FROM permisos WHERE hoja_id=? AND usuario_id=?', (hoja_id, usuario_id),
                                 one=True)
-            permisos_usuario = permisos[0] if permisos else None
+            if permisos:
+                return {"status": "ok", "permisos": permisos[0]}
+            else:
+                return {"status": "error", "mensaje": "No tienes permisos para ver esta hoja"}
 
-        if not permisos_usuario:
-            return {"status": "error", "mensaje": "No tienes permisos para ver esta hoja"}
-
+    def leer_datos_csv(self, hoja_id):
         archivo_csv = os.path.join(self.directorio_archivos, f'{hoja_id}.csv')
+        print(archivo_csv)
 
         if not os.path.exists(archivo_csv):
             return {"status": "error", "mensaje": "Archivo de hoja de calculo no encontrado"}
 
-        datos = []
-
-        archivo = open(archivo_csv, 'r', newline='')
         try:
-            lector = csv.reader(archivo)
-            datos = list(lector)
-        except Exception as e:
-            print(f"Error al leer el archivo CSV: {e}")
-        finally:
-            archivo.close()
+            archivo = open(archivo_csv, 'r', newline='')
+            try:
+                lector = csv.reader(archivo)
+                datos = list(lector)
+            except Exception as e:
+                return {"status": "error", "mensaje": f"Error al leer el archivo CSV: {e}"}
+            finally:
+                archivo.close()
+        except IOError as e:
+            return {"status": "error", "mensaje": f"Error al abrir el archivo CSV: {e}"}
 
-        return {"status": "ok", "datos": datos, "permisos": permisos_usuario}
+        return {"status": "ok", "datos": datos}
 
-    def descargar_hoja(self, mensaje):
-        hoja_id = mensaje['hoja_id']
+    def descargar_hoja(self, hoja_id):
         archivo_csv = os.path.join(self.directorio_archivos, f'{hoja_id}.csv')
 
         if not os.path.exists(archivo_csv):

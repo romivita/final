@@ -2,6 +2,7 @@ import csv
 import getpass
 import os
 import re
+import select
 import socket
 import sys
 import threading
@@ -80,6 +81,11 @@ class Cliente:
 
     def editar_hoja(self, hoja_id):
         self.hoja_editada = hoja_id
+        self.hoja_dict = {}
+        self.obtener_estado_hoja(hoja_id)
+
+        self.update_lock = threading.Lock()
+
         hilo_actualizaciones = threading.Thread(target=self.manejar_actualizaciones, daemon=True)
         hilo_actualizaciones.start()
         try:
@@ -104,7 +110,6 @@ class Cliente:
         finally:
             self.stop_event.set()
             hilo_actualizaciones.join()
-            self.desconectar()
 
     def compartir_hoja(self):
         hojas_creadas = [hoja for hoja in self.hojas if hoja[2] == self.usuario_id]
@@ -131,10 +136,26 @@ class Cliente:
         respuesta = Comunicacion.recibir(self.sock)
         print(respuesta["mensaje"])
 
-    def ver_hoja(self, hoja_id):
-        mensaje = {"accion": "ver_hoja", "hoja_id": hoja_id, "usuario_id": self.usuario_id}
+    def obtener_permisos(self, hoja_id):
+        mensaje = {"accion": "obtener_permisos", "hoja_id": hoja_id, "usuario_id": self.usuario_id}
         Comunicacion.enviar(mensaje, self.sock)
         respuesta = Comunicacion.recibir(self.sock)
+
+        if respuesta["status"] == "ok":
+            permisos = respuesta.get("permisos")
+            if permisos:
+                return {"status": "ok", "permisos": permisos}
+            else:
+                return {"status": "error", "mensaje": "El servidor no proporcionó permisos."}
+        else:
+            print(respuesta["mensaje"])
+            return {"status": "error", "mensaje": respuesta["mensaje"]}
+
+    def procesar_datos_csv(self, hoja_id):
+        mensaje = {"accion": "leer_datos_csv", "hoja_id": hoja_id, "usuario_id": self.usuario_id}
+        Comunicacion.enviar(mensaje, self.sock)
+        respuesta = Comunicacion.recibir(self.sock)
+
         if respuesta["status"] == "ok":
             datos = respuesta["datos"]
             if datos:
@@ -149,10 +170,10 @@ class Cliente:
                 print(tabulate(datos, headers=columnas, tablefmt="github"))
             else:
                 print("La hoja de calculo esta vacia.")
-            return respuesta.get("permisos", "solo lectura")
+            return {"status": "ok", "datos": datos}
         else:
             print(respuesta["mensaje"])
-            return "solo lectura"
+            return {"status": "error", "mensaje": respuesta["mensaje"]}
 
     def descargar_hoja(self, hoja_nombre, hoja_id):
         mensaje = {"accion": "descargar_hoja", "hoja_id": hoja_id}
@@ -177,18 +198,71 @@ class Cliente:
         else:
             print(respuesta["mensaje"])
 
+    def obtener_estado_hoja(self, hoja_id):
+        mensaje = {"accion": "leer_datos_csv", "hoja_id": hoja_id, "usuario_id": self.usuario_id}
+        Comunicacion.enviar(mensaje, self.sock)
+        respuesta = Comunicacion.recibir(self.sock)
+        if respuesta["status"] == "ok":
+            datos = respuesta["datos"]
+            self.hoja_dict = {}
+            if datos:
+                for i, fila in enumerate(datos):
+                    for j, valor in enumerate(fila):
+                        celda = f"{chr(65 + j)}{i + 1}"
+                        self.hoja_dict[celda] = valor
+            print("Hoja de cálculo inicializada.")
+            self.imprimir_hoja()
+        else:
+            print(respuesta["mensaje"])
+
+    def imprimir_hoja(self):
+        if not self.hoja_dict:
+            print("La hoja de cálculo está vacía.")
+            return
+
+        max_fila = max(int(celda[1:]) for celda in self.hoja_dict)
+        max_columna = max(ord(celda[0]) for celda in self.hoja_dict)
+
+        datos = [[] for _ in range(max_fila)]
+        for celda, valor in self.hoja_dict.items():
+            col = ord(celda[0]) - 65
+            fila = int(celda[1:]) - 1
+            if len(datos[fila]) <= col:
+                datos[fila].extend([''] * (col - len(datos[fila]) + 1))
+            datos[fila][col] = valor
+
+        max_columnas = max(len(fila) for fila in datos)
+        for fila in datos:
+            if len(fila) < max_columnas:
+                fila.extend([''] * (max_columnas - len(fila)))
+
+        columnas = [""] + [chr(65 + i) for i in range(max_columnas)]
+        for i, fila in enumerate(datos):
+            datos[i] = [str(i + 1)] + fila
+
+        print("Contenido actualizado de la hoja de cálculo:")
+        print(tabulate(datos, headers=columnas, tablefmt="github"))
+
     def manejar_actualizaciones(self):
         while not self.stop_event.is_set():
             try:
-                respuesta = Comunicacion.recibir(self.sock)
-                if respuesta and respuesta.get("accion") == "actualizacion":
-                    hoja_id = respuesta.get("hoja_id")
-                    celda = respuesta.get("celda")
-                    valor = respuesta.get("valor")
-                    usuario_id = respuesta.get("usuario_id")
-                    if hoja_id == self.hoja_editada:
-                        print(
-                            f"\nActualizacion recibida en hoja {hoja_id}: Celda {celda} = {valor} (Usuario ID: {usuario_id})")
+                readable, _, _ = select.select([self.sock], [], [], 1)
+                if readable:
+                    respuesta = Comunicacion.recibir(self.sock)
+                    if respuesta and respuesta.get("accion") == "actualizacion":
+                        hoja_id = respuesta.get("hoja_id")
+                        celda = respuesta.get("celda")
+                        valor = respuesta.get("valor")
+                        usuario_id = respuesta.get("usuario_id")
+                        if hoja_id == self.hoja_editada:
+                            print(
+                                f"\nActualizacion recibida en hoja {hoja_id}: Celda {celda} = {valor} (Usuario ID: {usuario_id})")
+                            self.update_lock.acquire()
+                            try:
+                                self.hoja_dict[celda] = valor
+                                self.imprimir_hoja()
+                            finally:
+                                self.update_lock.release()
             except Exception as e:
                 if self.stop_event.is_set():
                     break
@@ -206,7 +280,7 @@ class Cliente:
     def run(self):
         try:
             self.listar_hojas()
-            while True:
+            while not self.stop_event.is_set():
                 print("\nOpciones:")
                 print("1. Crear hoja de calculo")
                 print("2. Seleccionar una hoja de calculo")
@@ -220,16 +294,24 @@ class Cliente:
                         self.editar_hoja(hoja_id)
                 elif opcion == '2':
                     if not self.hojas:
-                        print("No tienes hojas de calculo disponibles para editar.")
+                        print("No tienes hojas de cálculo disponibles para editar.")
                     else:
-                        indice = int(input("Selecciona el numero de hoja: ")) - 1
+                        indice = int(input("Selecciona el número de hoja: ")) - 1
                         if 0 <= indice < len(self.hojas):
                             hoja_seleccionada = self.hojas[indice]
                             hoja_id = self.obtener_hoja_id(hoja_seleccionada[1])
                             if hoja_id:
-                                permisos = self.ver_hoja(hoja_id)
-                                if permisos in ["lectura y escritura", "creador"]:
-                                    self.editar_hoja(hoja_id)
+                                permisos_respuesta = self.obtener_permisos(hoja_id)
+                                if permisos_respuesta["status"] == "ok":
+                                    permisos = permisos_respuesta.get("permisos")
+                                    if permisos == "lectura y escritura":
+                                        self.editar_hoja(hoja_id)
+                                    elif permisos == "solo lectura":
+                                        self.procesar_datos_csv(hoja_id)
+                                    else:
+                                        print("No tienes permisos suficientes para editar esta hoja.")
+                                else:
+                                    print(permisos_respuesta["mensaje"])
                         else:
                             print("Selección no válida.")
                 elif opcion == '3':
@@ -256,6 +338,8 @@ class Cliente:
         finally:
             self.stop_event.set()
             self.desconectar()
+            print("Cliente desconectado.")
+            sys.exit()
 
 
 if __name__ == "__main__":
