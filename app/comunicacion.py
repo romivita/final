@@ -3,27 +3,27 @@ import json
 
 class Comunicacion:
     @staticmethod
-    def enviar(mensaje, conn):
+    def enviar_mensaje(mensaje, conn):
         try:
             mensaje_json = json.dumps(mensaje)
-            print(f"Mensaje JSON a enviar: {mensaje_json}")
             conn.sendall(mensaje_json.encode('utf-8'))
         except Exception as e:
             print(f"Error al enviar el mensaje JSON: {e}")
             raise
 
     @staticmethod
-    def recibir(conn):
+    def recibir_mensaje(conn, buffer_size=4096):
         try:
-            buffer_size = 4096
             data = conn.recv(buffer_size)
             if not data:
                 print("No se recibieron datos.")
                 return None
-            mensaje_json = data.decode('utf-8')
-            print(f"Mensaje recibido: {mensaje_json}")
-            mensaje = json.loads(mensaje_json)
-            return mensaje
+            return json.loads(data.decode('utf-8'))
         except Exception as e:
             print(f"Error al recibir el mensaje: {e}")
             return None
+
+    @staticmethod
+    def enviar_y_recibir(mensaje, conn, buffer_size=4096):
+        Comunicacion.enviar_mensaje(mensaje, conn)
+        return Comunicacion.recibir_mensaje(conn, buffer_size)
