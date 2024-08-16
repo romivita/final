@@ -4,8 +4,9 @@ import re
 import select
 import threading
 
-from comunicacion import Comunicacion
 from tabulate import tabulate
+
+from comunicacion import Comunicacion
 from utils import evaluar_expresion
 
 

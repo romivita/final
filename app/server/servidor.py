@@ -7,7 +7,6 @@ import threading
 
 from comunicacion import Comunicacion
 from config_util import cargar_configuracion
-
 from gestor_hojas import GestorHojas
 from manejador_mensajes import ManejadorMensajes
 
