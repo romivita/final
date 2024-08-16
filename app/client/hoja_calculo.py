@@ -17,6 +17,7 @@ class HojaCalculo:
         self.hojas = []
         self.hoja_dict = {}
         self.update_lock = threading.Lock()
+        self.stop_edicion = threading.Event()
 
     def listar_hojas(self):
         mensaje = {"accion": "listar_hojas", "creador_id": self.sesion.usuario_id}
@@ -146,35 +147,31 @@ class HojaCalculo:
         if respuesta["status"] == "ok":
             self.imprimir_hoja_calculo()
 
-        self.update_lock = threading.Lock()
-
+        self.stop_edicion.clear()
         hilo_actualizaciones = threading.Thread(target=self.manejar_actualizaciones, daemon=True)
         hilo_actualizaciones.start()
-        try:
-            while True:
-                try:
-                    celda = input("Celda: ").strip().upper()
-                    if not re.match(r'^[a-zA-Z]+\d+$', celda):
-                        print("Formato de celda no valido. Intenta de nuevo.")
-                        continue
-                    valor = input("Valor: ").strip()
-                    valor_evaluado = evaluar_expresion(valor)
-                    mensaje = {"accion": "editar_hoja", "hoja_id": hoja_id, "celda": celda, "valor": valor_evaluado,
-                               "usuario_id": self.sesion.usuario_id}
-                    Comunicacion.enviar_mensaje(mensaje, self.sesion.sock)
-                except KeyboardInterrupt:
-                    print("\nEdicion de hoja finalizada.")
-                    break
-                except Exception as e:
-                    print(f"Error: {e}")
-        except KeyboardInterrupt:
-            print("\nEdicion de hoja finalizada. Desconectando...")
-        finally:
-            self.sesion.stop_event.set()
-            hilo_actualizaciones.join()
+
+        while not self.stop_edicion.is_set():
+            try:
+                celda = input("Celda: ").strip().upper()
+                if not re.match(r'^[a-zA-Z]+\d+$', celda):
+                    print("Formato de celda no valido. Intenta de nuevo.")
+                    continue
+                valor = input("Valor: ").strip()
+                valor_evaluado = evaluar_expresion(valor)
+                mensaje = {"accion": "editar_hoja", "hoja_id": hoja_id, "celda": celda, "valor": valor_evaluado,
+                           "usuario_id": self.sesion.usuario_id}
+                Comunicacion.enviar_mensaje(mensaje, self.sesion.sock)
+            except KeyboardInterrupt:
+                print("\nEdicion de hoja finalizada. Volviendo al menu principal...")
+                self.stop_edicion.set()
+                break
+        hilo_actualizaciones.join()
+        self.hoja_editada = None
+        self.listar_hojas()
 
     def manejar_actualizaciones(self):
-        while not self.sesion.stop_event.is_set():
+        while not self.stop_edicion.is_set():
             try:
                 readable, _, _ = select.select([self.sesion.sock], [], [], 1)
                 if readable:
@@ -194,7 +191,7 @@ class HojaCalculo:
                             finally:
                                 self.update_lock.release()
             except Exception as e:
-                if self.sesion.stop_event.is_set():
+                if self.stop_edicion.is_set():
                     break
 
     def leer_datos_csv(self, hoja_id):
