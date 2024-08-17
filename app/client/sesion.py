@@ -11,7 +11,7 @@ class Sesion:
     def __init__(self, usuario):
         self.usuario = usuario
         self.host, self.port = cargar_configuracion()
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
 
