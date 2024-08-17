@@ -14,9 +14,10 @@ from manejador_mensajes import ManejadorMensajes
 class Servidor:
     def __init__(self):
         self.host, self.port = cargar_configuracion()
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.sock.bind((self.host, self.port))
+        self.sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        self.sock.bind((self.host, self.port, 0, 0))
         self.sock.listen(5)
         self.hojas_clientes = {}
         self.cola_ediciones = queue.Queue()

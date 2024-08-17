@@ -16,7 +16,7 @@ class Sesion:
         self.stop_event = threading.Event()
 
         try:
-            self.sock.connect((self.host, self.port))
+            self.sock.connect((self.host, self.port, 0, 0))
         except ConnectionRefusedError:
             sys.exit(f"No se pudo conectar al servidor en {self.host}:{self.port}. "
                      "Asegúrate de que el servidor esté corriendo e inténtalo nuevamente.")
