@@ -1,79 +1,64 @@
 import csv
 import os
 
-from comunicacion import Comunicacion
 from database_util import query_db
-from utils import celda_a_indices
 
 
-class GestorHojas:
+class GestorDeHojas:
+    def __init__(self, servidor):
+        self.servidor = servidor
+        self.directorio_archivos = servidor.directorio_archivos
 
-    @staticmethod
-    def crear_hoja(mensaje, servidor, conn):
+    def crear_hoja(self, mensaje, conn):
         nombre_hoja = mensaje['nombre']
-        usuario_id = mensaje['creador_id']
+        usuario_id = mensaje['usuario_id']
 
         hoja_existente = query_db('SELECT id FROM hojas_calculo WHERE nombre=? AND creador_id=?',
                                   (nombre_hoja, usuario_id), one=True)
         if hoja_existente:
-            return {"status": "error", "mensaje": "Hoja con ese nombre ya existe"}
+            return {"status": "error", "mensaje": "Ya existe una hoja con ese nombre"}
 
         query_db('INSERT INTO hojas_calculo (nombre, creador_id) VALUES (?, ?)', (nombre_hoja, usuario_id))
+        hoja_id = \
+        query_db('SELECT id FROM hojas_calculo WHERE nombre=? AND creador_id=?', (nombre_hoja, usuario_id), one=True)[0]
+        query_db('INSERT INTO permisos (hoja_id, usuario_id, permisos) VALUES (?, ?, ?)',
+                 (hoja_id, usuario_id, 'propietario'))
 
-        hoja_nueva = query_db('SELECT id FROM hojas_calculo WHERE nombre=? AND creador_id=?', (nombre_hoja, usuario_id),
-                              one=True)
-
-        hoja_id = hoja_nueva[0]
-        archivo_csv = os.path.join(servidor.directorio_archivos, f'{hoja_id}.csv')
-
-        if not os.path.exists(archivo_csv):
-            archivo = open(archivo_csv, 'w', newline='')
-            try:
-                writer = csv.writer(archivo)
-                writer.writerow([])
-            finally:
-                archivo.close()
-
-        GestorHojas.actualizar_mapeo_hojas(conn, hoja_id, servidor)
+        self.crear_archivo_csv(hoja_id)
+        self.servidor.asociar_cliente_hoja(conn, hoja_id)
 
         return {"status": "ok", "mensaje": "Hoja creada", "hoja_id": hoja_id}
 
-    @staticmethod
-    def listar_hojas(usuario_id):
-        hojas_creadas = query_db('''
-            SELECT hc.*, u.usuario 
-            FROM hojas_calculo hc 
-            JOIN usuarios u ON hc.creador_id = u.id 
-            WHERE hc.creador_id = ?
-        ''', (usuario_id,))
+    def crear_archivo_csv(self, hoja_id):
+        archivo_csv = os.path.join(self.directorio_archivos, f'{hoja_id}.csv')
+        if not os.path.exists(archivo_csv):
+            with open(archivo_csv, 'w', newline='') as archivo:
+                csv.writer(archivo).writerow([])
 
-        hojas_lectura_escritura = query_db('''
-            SELECT hc.*, u.usuario 
-            FROM hojas_calculo hc
-            JOIN permisos p ON hc.id = p.hoja_id
-            JOIN usuarios u ON hc.creador_id = u.id
-            WHERE p.usuario_id = ? AND p.permisos = 'lectura y escritura'
-        ''', (usuario_id,))
-
-        hojas_solo_lectura = query_db('''
-            SELECT hc.*, u.usuario 
-            FROM hojas_calculo hc
-            JOIN permisos p ON hc.id = p.hoja_id
-            JOIN usuarios u ON hc.creador_id = u.id
-            WHERE p.usuario_id = ? AND p.permisos = 'solo lectura'
-        ''', (usuario_id,))
+    def listar_hojas(self, mensaje):
+        usuario_id = mensaje['usuario_id']
+        hojas_creadas = self.obtener_hojas_con_permisos(usuario_id, 'propietario')
+        hojas_lectura_escritura = self.obtener_hojas_con_permisos(usuario_id, 'lectura y escritura')
+        hojas_solo_lectura = self.obtener_hojas_con_permisos(usuario_id, 'solo lectura')
 
         return {"status": "ok", "hojas_creadas": hojas_creadas, "hojas_lectura_escritura": hojas_lectura_escritura,
                 "hojas_solo_lectura": hojas_solo_lectura}
 
-    @staticmethod
-    def obtener_hoja_id(mensaje):
+    def obtener_hojas_con_permisos(self, usuario_id, permiso):
+        return query_db('''
+            SELECT h.*, u.usuario 
+            FROM hojas_calculo h
+            JOIN permisos p ON h.id = p.hoja_id
+            JOIN usuarios u ON h.creador_id = u.id
+            WHERE p.usuario_id = ? AND p.permisos = ?
+        ''', (usuario_id, permiso))
+
+    def obtener_hoja_id(self, mensaje):
         nombre_hoja = mensaje['nombre']
         usuario_id = mensaje['usuario_id']
 
         hoja = query_db('SELECT id FROM hojas_calculo WHERE nombre=? AND creador_id=?', (nombre_hoja, usuario_id),
                         one=True)
-
         if not hoja:
             hoja = query_db('''
                 SELECT hc.id FROM hojas_calculo hc
@@ -84,22 +69,16 @@ class GestorHojas:
         if hoja:
             return {"status": "ok", "hoja_id": hoja[0]}
         else:
-            return {"status": "error", "mensaje": "Hoja no encontrada"}
+            return {"status": "error", "mensaje": "No se encontró la hoja"}
 
-    @staticmethod
-    def editar_hoja(mensaje, servidor, conn):
+    def editar_celda(self, mensaje, conn):
         hoja_id = mensaje['hoja_id']
-        celda = mensaje['celda']
-        valor = mensaje['valor']
-        usuario_id = mensaje['usuario_id']
 
-        servidor.cola_ediciones.put((hoja_id, celda, valor, usuario_id))
-        GestorHojas.actualizar_mapeo_hojas(conn, hoja_id, servidor)
+        self.servidor.cola_ediciones.agregar_edicion(mensaje)
+        self.servidor.asociar_cliente_hoja(conn, hoja_id)
+        return {"status": "ok", "mensaje": "Edición registrada"}
 
-        return {"status": "ok", "mensaje": "Edicion en cola"}
-
-    @staticmethod
-    def compartir_hoja(mensaje):
+    def compartir_hoja(self, mensaje):
         hoja_id = mensaje['hoja_id']
         nombre_usuario = mensaje['nombre_usuario']
         permisos = mensaje['permisos']
@@ -122,95 +101,45 @@ class GestorHojas:
                  (hoja_id, usuario_id, permisos))
         return {"status": "ok", "mensaje": "Permisos otorgados"}
 
-    @staticmethod
-    def obtener_permisos(mensaje):
+    def obtener_permisos_usuario(self, mensaje):
         hoja_id = mensaje['hoja_id']
         usuario_id = mensaje['usuario_id']
 
-        creador = query_db('SELECT creador_id FROM hojas_calculo WHERE id=?', (hoja_id,), one=True)
-        if creador and creador[0] == usuario_id:
-            return {"status": "ok", "permisos": 'lectura y escritura'}
+        permisos = query_db('SELECT permisos FROM permisos WHERE hoja_id=? AND usuario_id=?', (hoja_id, usuario_id),
+                            one=True)
+        if permisos:
+            return {"status": "ok", "permisos": permisos[0]}
         else:
-            permisos = query_db('SELECT permisos FROM permisos WHERE hoja_id=? AND usuario_id=?', (hoja_id, usuario_id),
-                                one=True)
-            if permisos:
-                return {"status": "ok", "permisos": permisos[0]}
-            else:
-                return {"status": "error", "mensaje": "No se encontraron permisos"}
+            None
 
-    @staticmethod
-    def leer_datos_csv(hoja_id, servidor, conn):
-        archivo_csv = os.path.join(servidor.directorio_archivos, f'{hoja_id}.csv')
-        archivo = open(archivo_csv, 'r', newline='')
-        try:
-            lector = csv.reader(archivo)
-            datos = list(lector)
-        finally:
-            archivo.close()
+    def leer_datos_csv(self, mensaje, conn):
+        hoja_id = mensaje['hoja_id']
 
-        if conn not in servidor.hojas_clientes.get(hoja_id, []):
-            GestorHojas.actualizar_mapeo_hojas(conn, hoja_id, servidor)
-
+        archivo_csv = os.path.join(self.directorio_archivos, f'{hoja_id}.csv')
+        with open(archivo_csv, 'r', newline='') as archivo:
+            datos = list(csv.reader(archivo))
+        self.servidor.asociar_cliente_hoja(conn, hoja_id)
         return {"status": "ok", "datos": datos}
 
-    @staticmethod
-    def descargar_hoja(hoja_id):
-        archivo_csv = os.path.join(os.path.dirname(__file__), '..', 'hojas_de_calculo', f'{hoja_id}.csv')
-        try:
-            archivo = open(archivo_csv, 'r', newline='')
-            try:
-                lector = csv.reader(archivo)
-                contenido = list(lector)
-                return {"status": "ok", "contenido": contenido}
-            except Exception as e:
-                return {"status": "error", "mensaje": f"Error al leer el archivo CSV: {e}"}
-            finally:
-                archivo.close()
-        except FileNotFoundError:
-            return {"status": "error", "mensaje": "Archivo no encontrado"}
+    def descargar_hoja(self, mensaje):
+        hoja_id = mensaje['hoja_id']
+        archivo_csv = os.path.join(self.directorio_archivos, f'{hoja_id}.csv')
 
-    @staticmethod
-    def aplicar_edicion(hoja_id, celda, valor):
-        archivo_csv = os.path.join(os.path.dirname(__file__), '..', 'hojas_de_calculo', f'{hoja_id}.csv')
-        archivo = open(archivo_csv, 'r', newline='')
-        try:
-            lector = csv.reader(archivo)
-            datos = list(lector)
-        finally:
-            archivo.close()
+        if os.path.exists(archivo_csv):
+            with open(archivo_csv, 'r') as archivo:
+                contenido_csv = archivo.read()
+            return {"status": "ok", "contenido_csv": contenido_csv}
+        else:
+            return {"status": "error", "mensaje": "No se encontró el archivo"}
 
-        fila, columna = celda_a_indices(celda)
+    def eliminar_hoja(self, mensaje):
+        hoja_id = mensaje['hoja_id']
 
-        while len(datos) <= fila:
-            datos.append([])
+        query_db('DELETE FROM hojas_calculo WHERE id=?', (hoja_id,))
+        query_db('DELETE FROM permisos WHERE hoja_id=?', (hoja_id,))
 
-        while len(datos[fila]) <= columna:
-            datos[fila].append('')
+        archivo_csv = os.path.join(self.directorio_archivos, f'{hoja_id}.csv')
+        if os.path.exists(archivo_csv):
+            os.remove(archivo_csv)
 
-        datos[fila][columna] = valor
-
-        archivo = open(archivo_csv, 'w', newline='')
-        try:
-            escritor = csv.writer(archivo)
-            escritor.writerows(datos)
-        finally:
-            archivo.close()
-
-        return {"status": "ok", "mensaje": "Edicion aplicada"}
-
-    @staticmethod
-    def notificar_actualizacion(hoja_id, celda, valor, usuario_id, servidor):
-        if hoja_id in servidor.hojas_clientes:
-            for conn in servidor.hojas_clientes[hoja_id]:
-                if conn:
-                    Comunicacion.enviar_mensaje(
-                        {"accion": "actualizar_celda", "hoja_id": hoja_id, "celda": celda, "valor": valor,
-                         "usuario_id": usuario_id}, conn)
-
-    @staticmethod
-    def actualizar_mapeo_hojas(conn, hoja_id, servidor):
-        if hoja_id not in servidor.hojas_clientes:
-            servidor.hojas_clientes[hoja_id] = []
-
-        if conn not in servidor.hojas_clientes[hoja_id]:
-            servidor.hojas_clientes[hoja_id].append(conn)
+        return {"status": "ok", "mensaje": "Hoja eliminada"}

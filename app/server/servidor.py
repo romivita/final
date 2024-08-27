@@ -1,83 +1,153 @@
+import logging
 import os
-import queue
 import signal
 import socket
 import sys
 import threading
 
+from autenticacion import Autenticacion
+from cola_ediciones import ColaDeEdiciones
 from comunicacion import Comunicacion
 from config_util import cargar_configuracion
-from gestor_hojas import GestorHojas
-from manejador_mensajes import ManejadorMensajes
+from gestor_hojas import GestorDeHojas
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
 class Servidor:
     def __init__(self):
         self.host, self.port = cargar_configuracion()
-        self.sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
-        self.sock.bind((self.host, self.port, 0, 0))
-        self.sock.listen(5)
-        self.hojas_clientes = {}
-        self.cola_ediciones = queue.Queue()
+        self.sock_v4 = None
+        self.sock_v6 = None
+        self.clientes_hojas = {}
         self.lock = threading.Lock()
+        self.activo = True
 
         self.directorio_archivos = os.path.join(os.path.dirname(__file__), '..', 'hojas_de_calculo')
-        if not os.path.exists(self.directorio_archivos):
-            os.makedirs(self.directorio_archivos)
+        os.makedirs(self.directorio_archivos, exist_ok=True)
+
+        self.gestor_sesiones = Autenticacion(self)
+        self.gestor_hojas = GestorDeHojas(self)
+        self.cola_ediciones = ColaDeEdiciones(self)
 
         signal.signal(signal.SIGINT, self.terminar_servidor)
 
-        hilo_procesar_cola = threading.Thread(target=self.procesar_cola_ediciones, daemon=True)
-        hilo_procesar_cola.start()
+        logging.info(f"Servidor iniciado en {self.host}:{self.port}")
 
-        print(f"Servidor iniciado en {self.host}:{self.port}")
+    def configurar_socket(self, familia):
+        sock = socket.socket(familia, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((self.host, self.port))
+        sock.listen(5)
+        return sock
 
-    def procesar_cola_ediciones(self):
-        while True:
-            hoja_id, celda, valor, usuario_id = self.cola_ediciones.get()
-            resultado = GestorHojas.aplicar_edicion(hoja_id, celda, valor)
-            if resultado["status"] == "ok":
-                GestorHojas.notificar_actualizacion(hoja_id, celda, valor, usuario_id, self)
-            self.cola_ediciones.task_done()
+    def iniciar(self):
+        direcciones = socket.getaddrinfo(self.host, self.port, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        hilos = []
+
+        for direccion in direcciones:
+            familia = direccion[0]
+            if familia == socket.AF_INET and not self.sock_v4:
+                self.sock_v4 = self.configurar_socket(socket.AF_INET)
+                hilos.append(threading.Thread(target=self.escuchar_conexiones, args=(self.sock_v4,)))
+            elif familia == socket.AF_INET6 and not self.sock_v6:
+                self.sock_v6 = self.configurar_socket(socket.AF_INET6)
+                hilos.append(threading.Thread(target=self.escuchar_conexiones, args=(self.sock_v6,)))
+
+        for hilo in hilos:
+            hilo.start()
+
+        for hilo in hilos:
+            hilo.join()
+
+    def escuchar_conexiones(self, sock):
+        logging.info(f"Servidor escuchando en {sock.getsockname()}")
+        while self.activo:
+            try:
+                sock.settimeout(1.0)
+                conn, addr = sock.accept()
+                threading.Thread(target=self.manejar_cliente, args=(conn, addr)).start()
+            except socket.timeout:
+                continue
+            except OSError:
+                break
 
     def manejar_cliente(self, conn, addr):
-        print(f"Conexion desde {addr}")
-
+        logging.info(f"Conexión desde {addr}")
         try:
-            while True:
+            while self.activo:
                 mensaje = Comunicacion.recibir_mensaje(conn)
                 if not mensaje:
                     break
-                respuesta = ManejadorMensajes.procesar_mensaje(mensaje, conn, self)
+                respuesta = self.procesar_mensaje(mensaje, conn)
                 Comunicacion.enviar_mensaje(respuesta, conn)
-
-                if mensaje['accion'] == 'desconectar':
+                if mensaje.get('accion') == 'desconectar':
                     break
+        except (ConnectionResetError, ConnectionAbortedError):
+            logging.warning(f"Conexión terminada abruptamente desde {addr}")
         finally:
             conn.close()
             self.eliminar_conexion(conn)
+            logging.info(f"Conexión cerrada desde {addr}")
 
     def eliminar_conexion(self, conn):
-        self.lock.acquire()
-        try:
-            for hoja_id in list(self.hojas_clientes.keys()):
-                if conn in self.hojas_clientes[hoja_id]:
-                    self.hojas_clientes[hoja_id].remove(conn)
-                    if not self.hojas_clientes[hoja_id]:
-                        del self.hojas_clientes[hoja_id]
-        finally:
-            self.lock.release()
+        with self.lock:
+            hojas_a_eliminar = []
+            for hoja_id, conexiones in self.clientes_hojas.items():
+                if conn in conexiones:
+                    conexiones.remove(conn)
+                    if not conexiones:
+                        hojas_a_eliminar.append(hoja_id)
+            for hoja_id in hojas_a_eliminar:
+                del self.clientes_hojas[hoja_id]
 
-    def iniciar(self):
-        print("Servidor iniciado, esperando conexiones...")
-        while True:
-            conn, addr = self.sock.accept()
-            hilo_cliente = threading.Thread(target=self.manejar_cliente, args=(conn, addr))
-            hilo_cliente.start()
-
-    def terminar_servidor(self, sig, frame):
-        print("Terminando servidor...")
-        self.sock.close()
+    def terminar_servidor(self, sig=None, frame=None):
+        logging.info("Terminando servidor...")
+        self.activo = False
+        self.cerrar_socket(self.sock_v4)
+        self.cerrar_socket(self.sock_v6)
         sys.exit(0)
+
+    def cerrar_socket(self, sock):
+        if sock:
+            sock.close()
+
+    def asociar_cliente_hoja(self, conn, hoja_id):
+        with self.lock:
+            if hoja_id not in self.clientes_hojas:
+                self.clientes_hojas[hoja_id] = []
+            if conn not in self.clientes_hojas[hoja_id]:
+                self.clientes_hojas[hoja_id].append(conn)
+
+    def asociar_cliente_hojas(self, conn, hojas_ids):
+        with self.lock:
+            for hoja_id in hojas_ids:
+                self.asociar_cliente_hoja(conn, hoja_id)
+
+    def procesar_mensaje(self, mensaje, conn):
+        accion = mensaje.get("accion")
+
+        if accion == "iniciar_sesion":
+            return self.gestor_sesiones.iniciar_sesion(mensaje, conn)
+        elif accion == "crear_hoja":
+            return self.gestor_hojas.crear_hoja(mensaje, conn)
+        elif accion == "listar_hojas":
+            return self.gestor_hojas.listar_hojas(mensaje)
+        elif accion == "obtener_hoja_id":
+            return self.gestor_hojas.obtener_hoja_id(mensaje)
+        elif mensaje['accion'] == 'obtener_permisos':
+            return self.gestor_hojas.obtener_permisos_usuario(mensaje)
+        elif mensaje['accion'] == 'leer_datos_csv':
+            return self.gestor_hojas.leer_datos_csv(mensaje, conn)
+        elif accion == "editar_celda":
+            return self.gestor_hojas.editar_celda(mensaje, conn)
+        elif mensaje['accion'] == 'compartir_hoja':
+            return self.gestor_hojas.compartir_hoja(mensaje)
+        elif accion == "descargar_hoja":
+            return self.gestor_hojas.descargar_hoja(mensaje)
+        elif accion == "eliminar_hoja":
+            return self.gestor_hojas.eliminar_hoja(mensaje)
+        elif accion == "desconectar":
+            return {"status": "ok", "mensaje": "Desconectado"}
+        else:
+            return {"status": "error", "mensaje": "Acción desconocida"}

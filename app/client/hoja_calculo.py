@@ -2,6 +2,7 @@ import csv
 import os
 import re
 import select
+import socket
 import threading
 
 from tabulate import tabulate
@@ -17,10 +18,10 @@ class HojaCalculo:
         self.hojas = []
         self.hoja_dict = {}
         self.update_lock = threading.Lock()
-        self.stop_edicion = threading.Event()
+        self.stop_edicion = self.sesion.stop_edicion
 
     def listar_hojas(self):
-        mensaje = {"accion": "listar_hojas", "creador_id": self.sesion.usuario_id}
+        mensaje = {"accion": "listar_hojas", "usuario_id": self.sesion.usuario_id}
         respuesta = Comunicacion.enviar_y_recibir(mensaje, self.sesion.sock)
         if respuesta['status'] == 'ok':
             self.hojas = respuesta['hojas_creadas'] + respuesta['hojas_lectura_escritura'] + respuesta[
@@ -36,10 +37,10 @@ class HojaCalculo:
 
     def crear_hoja(self):
         nombre = input("Nombre de la hoja de calculo: ")
-        mensaje = {"accion": "crear_hoja", "nombre": nombre, "creador_id": self.sesion.usuario_id}
+        mensaje = {"accion": "crear_hoja", "nombre": nombre, "usuario_id": self.sesion.usuario_id}
         respuesta = Comunicacion.enviar_y_recibir(mensaje, self.sesion.sock)
         if respuesta["status"] == "ok":
-            self.editar_hoja(respuesta["hoja_id"])
+            self._editar_hoja(respuesta["hoja_id"])
         else:
             print(respuesta["mensaje"])
 
@@ -48,31 +49,72 @@ class HojaCalculo:
             print("No tienes hojas de cálculo disponibles para editar.")
             return
 
-        indice = int(input("Selecciona el número de hoja: ")) - 1
-        if 0 <= indice < len(self.hojas):
-            hoja_seleccionada = self.hojas[indice]
-            hoja_id = self.obtener_hoja_id(hoja_seleccionada[1])
-            if hoja_id:
-                self.editar_o_ver_hoja(hoja_id)
-        else:
-            print("Selección no válida.")
+        try:
+            indice = int(input("Selecciona el número de hoja: ")) - 1
+            if 0 <= indice < len(self.hojas):
+                hoja_seleccionada = self.hojas[indice]
+                hoja_id = self.obtener_hoja_id(hoja_seleccionada[1])
+                if hoja_id:
+                    self.editar_o_ver_hoja(hoja_id)
+            else:
+                print("Selección no válida.")
+        except ValueError:
+            print("Opción no válida. Debes ingresar un número entero.")
 
     def editar_o_ver_hoja(self, hoja_id):
-        permisos_respuesta = self.obtener_permisos(hoja_id)
-        if permisos_respuesta["status"] == "ok":
-            permisos = permisos_respuesta.get("permisos")
-            if permisos == "lectura y escritura":
-                self.editar_hoja(hoja_id)
-            elif permisos == "solo lectura":
-                respuesta = self.leer_datos_csv(hoja_id)
-                if respuesta["status"] == "ok":
-                    self.imprimir_hoja_calculo()
-                else:
-                    print(respuesta["mensaje"])
-            else:
-                print("No tienes permisos suficientes para editar esta hoja.")
-        else:
+        permisos_respuesta = self.obtener_permisos_usuario(hoja_id)
+        if permisos_respuesta["status"] != "ok":
             print(permisos_respuesta["mensaje"])
+            return
+
+        permisos = permisos_respuesta.get("permisos")
+        es_editable = permisos in ["lectura y escritura", "propietario"]
+
+        if permisos not in ["lectura y escritura", "propietario", "solo lectura"]:
+            print("No tienes permisos suficientes para editar esta hoja.")
+            return
+
+        self.hoja_editada = hoja_id
+        self.hoja_dict = {}
+
+        respuesta = self.leer_datos_csv(hoja_id)
+        if respuesta["status"] == "ok":
+            self.imprimir_hoja_calculo()
+
+        self.stop_edicion.clear()
+        hilo_actualizaciones = threading.Thread(target=self.manejar_actualizaciones, daemon=True)
+        hilo_actualizaciones.start()
+
+        try:
+            if es_editable:
+                self._editar_hoja(hoja_id)
+            else:
+                self._ver_hoja_solo_lectura()
+        except KeyboardInterrupt:
+            print("\nEdicion de hoja finalizada. Volviendo al menu principal...")
+        finally:
+            self.stop_edicion.set()
+            hilo_actualizaciones.join()
+            self.hoja_editada = None
+
+    def _editar_hoja(self, hoja_id):
+        while not self.stop_edicion.is_set():
+            celda = input("Celda: ").strip().upper()
+            if not re.match(r'^[a-zA-Z]+\d+$', celda):
+                print("Formato de celda no valido. Intenta de nuevo.")
+                continue
+
+            valor = input("Valor: ").strip()
+            valor_evaluado = evaluar_expresion(valor)
+
+            mensaje = {"accion": "editar_celda", "hoja_id": hoja_id, "celda": celda, "valor": valor_evaluado,
+                       "usuario_id": self.sesion.usuario_id}
+
+            Comunicacion.enviar_mensaje(mensaje, self.sesion.sock)
+
+    def _ver_hoja_solo_lectura(self):
+        while not self.stop_edicion.is_set():
+            continue
 
     def compartir_hoja(self):
         if not self.hojas:
@@ -127,6 +169,22 @@ class HojaCalculo:
         else:
             print("Selección no válida.")
 
+    def eliminar_hoja(self):
+        if not self.hojas:
+            print("No tienes hojas de calculo disponibles.")
+            return
+
+        indice = int(input("Selecciona el número de hoja para eliminar: ")) - 1
+        if 0 <= indice < len(self.hojas):
+            hoja_seleccionada = self.hojas[indice]
+            hoja_id = self.obtener_hoja_id(hoja_seleccionada[1])
+            if hoja_id:
+                mensaje = {"accion": "eliminar_hoja", "hoja_id": hoja_id, "usuario_id": self.sesion.usuario_id}
+                respuesta = Comunicacion.enviar_y_recibir(mensaje, self.sesion.sock)
+                print(respuesta["mensaje"])
+        else:
+            print("Selección no válida.")
+
     def obtener_hoja_id(self, nombre):
         mensaje = {"accion": "obtener_hoja_id", "nombre": nombre, "usuario_id": self.sesion.usuario_id}
         respuesta = Comunicacion.enviar_y_recibir(mensaje, self.sesion.sock)
@@ -136,63 +194,36 @@ class HojaCalculo:
             print(respuesta["mensaje"])
             return None
 
-    def obtener_permisos(self, hoja_id):
+    def obtener_permisos_usuario(self, hoja_id):
         mensaje = {"accion": "obtener_permisos", "hoja_id": hoja_id, "usuario_id": self.sesion.usuario_id}
         return Comunicacion.enviar_y_recibir(mensaje, self.sesion.sock)
 
-    def editar_hoja(self, hoja_id):
-        self.hoja_editada = hoja_id
-        self.hoja_dict = {}
-        respuesta = self.leer_datos_csv(hoja_id)
-        if respuesta["status"] == "ok":
-            self.imprimir_hoja_calculo()
-
-        self.stop_edicion.clear()
-        hilo_actualizaciones = threading.Thread(target=self.manejar_actualizaciones, daemon=True)
-        hilo_actualizaciones.start()
-
-        while not self.stop_edicion.is_set():
-            try:
-                celda = input("Celda: ").strip().upper()
-                if not re.match(r'^[a-zA-Z]+\d+$', celda):
-                    print("Formato de celda no valido. Intenta de nuevo.")
-                    continue
-                valor = input("Valor: ").strip()
-                valor_evaluado = evaluar_expresion(valor)
-                mensaje = {"accion": "editar_hoja", "hoja_id": hoja_id, "celda": celda, "valor": valor_evaluado,
-                           "usuario_id": self.sesion.usuario_id}
-                Comunicacion.enviar_mensaje(mensaje, self.sesion.sock)
-            except KeyboardInterrupt:
-                print("\nEdicion de hoja finalizada. Volviendo al menu principal...")
-                self.stop_edicion.set()
-                break
-        hilo_actualizaciones.join()
-        self.hoja_editada = None
-        self.listar_hojas()
-
     def manejar_actualizaciones(self):
-        while not self.stop_edicion.is_set():
-            try:
-                readable, _, _ = select.select([self.sesion.sock], [], [], 1)
-                if readable:
-                    respuesta = Comunicacion.recibir_mensaje(self.sesion.sock)
-                    if respuesta and respuesta.get("accion") == "actualizar_celda":
-                        hoja_id = respuesta.get("hoja_id")
-                        celda = respuesta.get("celda")
-                        valor = respuesta.get("valor")
-                        usuario_id = respuesta.get("usuario_id")
-                        if hoja_id == self.hoja_editada:
-                            print(
-                                f"\nActualizacion recibida en hoja {hoja_id}: Celda {celda} = {valor} (Usuario ID: {usuario_id})")
-                            self.update_lock.acquire()
-                            try:
-                                self.hoja_dict[celda] = valor
-                                self.imprimir_hoja_calculo()
-                            finally:
-                                self.update_lock.release()
-            except Exception as e:
-                if self.stop_edicion.is_set():
+        try:
+            while not self.stop_edicion.is_set():
+                try:
+                    readable, _, _ = select.select([self.sesion.sock], [], [], 1)
+                    if readable:
+                        respuesta = Comunicacion.recibir_mensaje(self.sesion.sock)
+                        if respuesta and respuesta.get("accion") == "actualizar_celda":
+                            hoja_id = respuesta.get("hoja_id")
+                            celda = respuesta.get("celda")
+                            valor = respuesta.get("valor")
+                            usuario_id = respuesta.get("usuario_id")
+                            if hoja_id == self.hoja_editada:
+                                print(
+                                    f"\nActualización recibida en hoja {hoja_id}: Celda {celda} = {valor} (Usuario ID: {usuario_id})")
+                                with self.update_lock:
+                                    self.hoja_dict[celda] = valor
+                                    self.imprimir_hoja_calculo()
+                except (socket.error, ConnectionResetError, OSError) as e:
+                    print(f"\nError: El servidor se desconectó inesperadamente. {e}")
                     break
+        except Exception as e:
+            print(f"\nError en el hilo de actualizaciones: {e}")
+        finally:
+            print("Hilo de actualizaciones terminado.")
+            self.stop_edicion.set()
 
     def leer_datos_csv(self, hoja_id):
         mensaje = {"accion": "leer_datos_csv", "hoja_id": hoja_id, "usuario_id": self.sesion.usuario_id}
