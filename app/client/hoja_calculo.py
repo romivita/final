@@ -40,7 +40,7 @@ class HojaCalculo:
         mensaje = {"accion": "crear_hoja", "nombre": nombre, "usuario_id": self.sesion.usuario_id}
         respuesta = Comunicacion.enviar_y_recibir(mensaje, self.sesion.sock)
         if respuesta["status"] == "ok":
-            self._editar_hoja(respuesta["hoja_id"])
+            self.editar_o_ver_hoja(respuesta["hoja_id"])
         else:
             print(respuesta["mensaje"])
 
