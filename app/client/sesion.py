@@ -43,6 +43,13 @@ class Sesion:
             sys.exit("Error de autenticación. Saliendo...")
 
     def desconectar(self):
+        try:
+            if self.sock:
+                mensaje = {"accion": "desconectar"}
+                Comunicacion.enviar_mensaje(mensaje, self.sock)
+        except Exception as e:
+            print(f"Error al enviar mensaje de desconexión: {e}")
+
         self.stop_event.set()
         self.stop_edicion.set()
         if self.sock:

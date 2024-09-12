@@ -11,8 +11,6 @@ from comunicacion import Comunicacion
 from config_util import cargar_configuracion
 from gestor_hojas import GestorDeHojas
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
 
 class Servidor:
     def __init__(self):
@@ -82,9 +80,12 @@ class Servidor:
                 respuesta = self.procesar_mensaje(mensaje, conn)
                 Comunicacion.enviar_mensaje(respuesta, conn)
                 if mensaje.get('accion') == 'desconectar':
+                    logging.info(f"Cliente {addr} ha solicitado desconexión.")
                     break
         except (ConnectionResetError, ConnectionAbortedError):
             logging.warning(f"Conexión terminada abruptamente desde {addr}")
+        except Exception as e:
+            logging.error(f"Error manejando cliente {addr}: {e}")
         finally:
             conn.close()
             self.eliminar_conexion(conn)

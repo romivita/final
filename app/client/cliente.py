@@ -40,7 +40,9 @@ class Cliente:
                 opcion = input("Selecciona una opción: ")
                 self.seleccionar_opcion(opcion)
         except KeyboardInterrupt:
-            print("\nSaliendo del cliente...")
+            print("\nSaliendo del cliente por interrupción...")
+        except Exception as e:
+            print(f"Ha ocurrido un error inesperado: {e}")
         finally:
             self.sesion.desconectar()
 
