@@ -34,6 +34,10 @@ def celda_a_indices(celda):
     fila = int(fila_numeros) - 1
     return fila, columna
 
+def eliminar_ceros_a_la_izquierda(expresion):
+    """Elimina ceros a la izquierda en números enteros de una expresión matemática"""
+    import re
+    return re.sub(r'\b0+(\d)', r'\1', expresion)
 
 def evaluar_expresion(expresion):
     """Evalúa una expresión matemática dada como string. Si la expresión comienza con '=', se evalúa,
@@ -42,6 +46,8 @@ def evaluar_expresion(expresion):
         return expresion
 
     expresion = expresion[1:]
+    expresion = eliminar_ceros_a_la_izquierda(expresion)
+
     try:
         tree = ast.parse(expresion, mode='eval')
 
