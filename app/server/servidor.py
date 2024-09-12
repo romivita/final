@@ -8,13 +8,13 @@ import threading
 from autenticacion import Autenticacion
 from cola_ediciones import ColaDeEdiciones
 from comunicacion import Comunicacion
-from config_util import cargar_configuracion
 from gestor_hojas import GestorDeHojas
 
 
 class Servidor:
-    def __init__(self):
-        self.host, self.port = cargar_configuracion()
+    def __init__(self, host, port):
+        self.host = host
+        self.port = port
         self.sock_v4 = None
         self.sock_v6 = None
         self.clientes_hojas = {}
@@ -71,7 +71,7 @@ class Servidor:
                 break
 
     def manejar_cliente(self, conn, addr):
-        logging.info(f"Conexión desde {addr}")
+        logging.info(f"Conexion desde {addr}")
         try:
             while self.activo:
                 mensaje = Comunicacion.recibir_mensaje(conn)
@@ -80,16 +80,16 @@ class Servidor:
                 respuesta = self.procesar_mensaje(mensaje, conn)
                 Comunicacion.enviar_mensaje(respuesta, conn)
                 if mensaje.get('accion') == 'desconectar':
-                    logging.info(f"Cliente {addr} ha solicitado desconexión.")
+                    logging.info(f"Cliente {addr} ha solicitado desconexion.")
                     break
         except (ConnectionResetError, ConnectionAbortedError):
-            logging.warning(f"Conexión terminada abruptamente desde {addr}")
+            logging.warning(f"Conexion terminada abruptamente desde {addr}")
         except Exception as e:
             logging.error(f"Error manejando cliente {addr}: {e}")
         finally:
             conn.close()
             self.eliminar_conexion(conn)
-            logging.info(f"Conexión cerrada desde {addr}")
+            logging.info(f"Conexion cerrada desde {addr}")
 
     def eliminar_conexion(self, conn):
         with self.lock:
@@ -151,4 +151,4 @@ class Servidor:
         elif accion == "desconectar":
             return {"status": "ok", "mensaje": "Desconectado"}
         else:
-            return {"status": "error", "mensaje": "Acción desconocida"}
+            return {"status": "error", "mensaje": "Accion desconocida"}

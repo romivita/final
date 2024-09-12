@@ -7,9 +7,10 @@ from comunicacion import Comunicacion
 
 
 class Sesion:
-    def __init__(self, usuario, host):
+    def __init__(self, usuario, host, port):
         self.usuario = usuario
-        self.host, self.port = host, 55011
+        self.host = host
+        self.port = port
         self.sock = None
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
@@ -31,7 +32,7 @@ class Sesion:
                     self.sock = None
         if self.sock is None:
             sys.exit(f"No se pudo conectar al servidor en {self.host}:{self.port}. "
-                     "Asegúrate de que el servidor esté corriendo e inténtalo nuevamente.")
+                     "Asegurate de que el servidor este corriendo e intentalo nuevamente.")
 
     def autenticar_usuario(self):
         pwd = getpass.getpass("Contraseña: ")
@@ -40,7 +41,7 @@ class Sesion:
         if respuesta["status"] == "ok":
             return respuesta["usuario_id"]
         else:
-            sys.exit("Error de autenticación. Saliendo...")
+            sys.exit("Error de autenticacion. Saliendo...")
 
     def desconectar(self):
         try:
@@ -48,7 +49,7 @@ class Sesion:
                 mensaje = {"accion": "desconectar"}
                 Comunicacion.enviar_mensaje(mensaje, self.sock)
         except Exception as e:
-            print(f"Error al enviar mensaje de desconexión: {e}")
+            print(f"Error al enviar mensaje de desconexion: {e}")
 
         self.stop_event.set()
         self.stop_edicion.set()
