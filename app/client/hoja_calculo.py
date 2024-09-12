@@ -120,54 +120,58 @@ class HojaCalculo:
         if not self.hojas:
             print("No tienes hojas de cálculo disponibles para editar.")
             return
-
-        indice = int(input("Selecciona el número de hoja: ")) - 1
-        if 0 <= indice < len(self.hojas):
-            hoja_seleccionada = self.hojas[indice]
-            hoja_id = self.obtener_hoja_id(hoja_seleccionada[1])
-            if hoja_id:
-                nombre_usuario = input("Nombre del usuario con quien compartir: ")
-                print("Selecciona el permiso que deseas otorgar:")
-                print("1. Solo lectura")
-                print("2. Lectura y escritura")
-                permisos = "lectura y escritura" if input("Selecciona una opcion: ") == '2' else "solo lectura"
-                mensaje = {"accion": "compartir_hoja", "hoja_id": hoja_id, "nombre_usuario": nombre_usuario,
-                           "permisos": permisos}
-                respuesta = Comunicacion.enviar_y_recibir(mensaje, self.sesion.sock)
-                print(respuesta["mensaje"])
+        try:
+            indice = int(input("Selecciona el número de hoja: ")) - 1
+            if 0 <= indice < len(self.hojas):
+                hoja_seleccionada = self.hojas[indice]
+                hoja_id = self.obtener_hoja_id(hoja_seleccionada[1])
+                if hoja_id:
+                    nombre_usuario = input("Nombre del usuario con quien compartir: ")
+                    print("Selecciona el permiso que deseas otorgar:")
+                    print("1. Solo lectura")
+                    print("2. Lectura y escritura")
+                    permisos = "lectura y escritura" if input("Selecciona una opcion: ") == '2' else "solo lectura"
+                    mensaje = {"accion": "compartir_hoja", "hoja_id": hoja_id, "nombre_usuario": nombre_usuario,
+                               "permisos": permisos}
+                    respuesta = Comunicacion.enviar_y_recibir(mensaje, self.sesion.sock)
+                    print(respuesta["mensaje"])
+        except ValueError:
+            print("Opción no válida. Debes ingresar un número entero.")
 
     def descargar_hoja(self):
         if not self.hojas:
             print("No tienes hojas de calculo disponibles para descargar.")
             return
-
-        indice = int(input("Selecciona el número de hoja: ")) - 1
-        if 0 <= indice < len(self.hojas):
-            hoja_seleccionada = self.hojas[indice]
-            hoja_nombre = hoja_seleccionada[1]
-            hoja_id = self.obtener_hoja_id(hoja_seleccionada[1])
-            if hoja_id:
-                mensaje = {"accion": "descargar_hoja", "hoja_id": hoja_id}
-                respuesta = Comunicacion.enviar_y_recibir(mensaje, self.sesion.sock)
-                if respuesta["status"] == "ok":
-                    downloads_path = os.path.join(os.path.expanduser('~'), 'Downloads')
-                    nombre_archivo = os.path.join(downloads_path, f"{hoja_nombre}.csv")
-                    try:
-                        archivo = open(nombre_archivo, 'w', newline='')
+        try:
+            indice = int(input("Selecciona el número de hoja: ")) - 1
+            if 0 <= indice < len(self.hojas):
+                hoja_seleccionada = self.hojas[indice]
+                hoja_nombre = hoja_seleccionada[1]
+                hoja_id = self.obtener_hoja_id(hoja_seleccionada[1])
+                if hoja_id:
+                    mensaje = {"accion": "descargar_hoja", "hoja_id": hoja_id}
+                    respuesta = Comunicacion.enviar_y_recibir(mensaje, self.sesion.sock)
+                    if respuesta["status"] == "ok":
+                        downloads_path = os.path.join(os.path.expanduser('~'), 'Downloads')
+                        nombre_archivo = os.path.join(downloads_path, f"{hoja_nombre}.csv")
                         try:
-                            escritor = csv.writer(archivo)
-                            escritor.writerows(respuesta["contenido_csv"])
-                            print(f"Hoja de cálculo descargada y guardada en {nombre_archivo}")
+                            archivo = open(nombre_archivo, 'w', newline='')
+                            try:
+                                escritor = csv.writer(archivo)
+                                escritor.writerows(respuesta["contenido_csv"])
+                                print(f"Hoja de cálculo descargada y guardada en {nombre_archivo}")
+                            except Exception as e:
+                                return {"status": "error", "mensaje": f"Error al escribir en el archivo CSV: {e}"}
+                            finally:
+                                archivo.close()
                         except Exception as e:
-                            return {"status": "error", "mensaje": f"Error al escribir en el archivo CSV: {e}"}
-                        finally:
-                            archivo.close()
-                    except Exception as e:
-                        return {"status": "error", "mensaje": f"Error al abrir el archivo CSV: {e}"}
-                else:
-                    print(respuesta["mensaje"])
-        else:
-            print("Selección no válida.")
+                            return {"status": "error", "mensaje": f"Error al abrir el archivo CSV: {e}"}
+                    else:
+                        print(respuesta["mensaje"])
+            else:
+                print("Selección no válida.")
+        except ValueError:
+            print("Opción no válida. Debes ingresar un número entero.")
 
     def eliminar_hoja(self):
         if not self.hojas:
@@ -256,7 +260,6 @@ class HojaCalculo:
             return
 
         max_fila = max(int(celda[1:]) for celda in self.hoja_dict)
-        max_columna = max(ord(celda[0]) for celda in self.hoja_dict) - 65
 
         datos = [[] for _ in range(max_fila)]
         for celda, valor in self.hoja_dict.items():

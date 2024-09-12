@@ -1,3 +1,4 @@
+#!/opt/homebrew/bin/python3
 import sys
 
 from hoja_calculo import HojaCalculo
