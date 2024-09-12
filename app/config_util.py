@@ -1,24 +1,9 @@
-import json
-import os
-
-
-def obtener_ruta_configuracion():
-    return os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'fixtures/config.json'))
+import configparser
 
 
 def cargar_configuracion():
-    ruta_config = obtener_ruta_configuracion()
-    file = None
-    try:
-        file = open(ruta_config, "r")
-        config = json.load(file)
-        return config["host"], config["port"]
-    except FileNotFoundError:
-        print(f"Archivo de configuración no encontrado en {ruta_config}")
-        return None, None
-    except json.JSONDecodeError as e:
-        print(f"Error al decodificar el archivo JSON: {e}")
-        return None, None
-    finally:
-        if file:
-            file.close()
+    config = configparser.ConfigParser()
+    config.read('config.ini')
+    host = config.get('DEFAULT', 'host')
+    port = config.getint('DEFAULT', 'port')
+    return host, port
