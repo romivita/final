@@ -1,4 +1,5 @@
 import getpass
+import logging
 import socket
 import sys
 import threading
@@ -31,28 +32,32 @@ class Sesion:
                     self.sock.close()
                     self.sock = None
         if self.sock is None:
-            sys.exit(f"No se pudo conectar al servidor en {self.host}:{self.port}. "
-                     "Asegurate de que el servidor este corriendo e intentalo nuevamente.")
+            sys.exit(f"No se pudo conectar al servidor en {self.host}:{self.port}.")
 
     def autenticar_usuario(self):
         pwd = getpass.getpass("Contraseña: ")
         mensaje = {"accion": "iniciar_sesion", "usuario": self.usuario, "pwd": pwd}
         respuesta = Comunicacion.enviar_y_recibir(mensaje, self.sock)
-        if respuesta["status"] == "ok":
+        return self._validar_autenticacion(respuesta)
+
+    def _validar_autenticacion(self, respuesta):
+        if respuesta.get("status") == "ok":
             return respuesta["usuario_id"]
-        else:
-            sys.exit("Error de autenticacion. Saliendo...")
+        sys.exit("Error de autenticacion. Saliendo...")
 
     def desconectar(self):
-        try:
-            if self.sock:
+        if self.sock:
+            try:
                 mensaje = {"accion": "desconectar"}
                 Comunicacion.enviar_mensaje(mensaje, self.sock)
-        except Exception as e:
-            print(f"Error al enviar mensaje de desconexion: {e}")
+            except Exception as e:
+                logging.exception(f"Error al enviar mensaje de desconexion: {e}")
+            finally:
+                self._cerrar_sesion()
 
+    def _cerrar_sesion(self):
         self.stop_event.set()
         self.stop_edicion.set()
         if self.sock:
             self.sock.close()
-        print("Cliente cerrado.")
+        logging.info("Cliente desconectado")

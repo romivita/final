@@ -1,4 +1,5 @@
 import csv
+import logging
 import os
 import re
 import select
@@ -14,74 +15,85 @@ from utils import evaluar_expresion
 class HojaCalculo:
     def __init__(self, sesion):
         self.sesion = sesion
-        self.hoja_editada = None
-        self.hojas = []
-        self.hoja_dict = {}
+        self.hoja_editada_id = None
+        self.lista_hojas = []
+        self.dict_celdas_hoja = {}
         self.update_lock = threading.Lock()
         self.stop_edicion = self.sesion.stop_edicion
 
-    def listar_hojas(self):
-        mensaje = {"accion": "listar_hojas", "usuario_id": self.sesion.usuario_id}
+    def _enviar_mensaje(self, mensaje):
         respuesta = Comunicacion.enviar_y_recibir(mensaje, self.sesion.sock)
+        if respuesta["status"] != "ok":
+            logging.error(f"Error al enviar mensaje: {respuesta.get('mensaje')}")
+        return respuesta
+
+    def _obtener_hojas(self):
+        mensaje = {"accion": "listar_hojas", "usuario_id": self.sesion.usuario_id}
+        respuesta = self._enviar_mensaje(mensaje)
         if respuesta['status'] == 'ok':
-            self.hojas = respuesta['hojas_creadas'] + respuesta['hojas_lectura_escritura'] + respuesta[
+            self.lista_hojas = respuesta['hojas_creadas'] + respuesta['hojas_lectura_escritura'] + respuesta[
                 'hojas_solo_lectura']
-            if self.hojas:
-                headers = ["#", "Nombre", "Creador"]
-                tabla_hojas = [[i + 1, hoja[1], hoja[-1]] for i, hoja in enumerate(self.hojas)]
-                print(tabulate(tabla_hojas, headers, tablefmt="github"))
-            else:
-                print("No tienes hojas de calculo.")
         else:
-            print(respuesta["mensaje"])
+            logging.error("Error obteniendo las hojas de calculo")
+
+    def listar_hojas(self):
+        self._obtener_hojas()
+        if self.lista_hojas:
+            headers = ["#", "Nombre", "Creador"]
+            tabla_hojas = [[i + 1, hoja[1], hoja[-1]] for i, hoja in enumerate(self.lista_hojas)]
+            print("\n", tabulate(tabla_hojas, headers, tablefmt="github"))
+        else:
+            print("No tienes hojas de calculo")
 
     def crear_hoja(self):
         nombre = input("Nombre de la hoja de calculo: ")
         mensaje = {"accion": "crear_hoja", "nombre": nombre, "usuario_id": self.sesion.usuario_id}
-        respuesta = Comunicacion.enviar_y_recibir(mensaje, self.sesion.sock)
+        respuesta = self._enviar_mensaje(mensaje)
         if respuesta["status"] == "ok":
             self.editar_o_ver_hoja(respuesta["hoja_id"])
-        else:
-            print(respuesta["mensaje"])
+
+    def _seleccionar_hoja(self, prompt):
+        self._obtener_hojas()
+        if not self.lista_hojas:
+            print("No tienes hojas de calculo")
+            return None
+        try:
+            indice = int(input(prompt)) - 1
+            if 0 <= indice < len(self.lista_hojas):
+                return self.lista_hojas[indice]
+            print("Seleccion no valida")
+        except ValueError:
+            print("Opcion no valida. Debes ingresar un numero")
+        return None
 
     def seleccionar_hoja(self):
-        if not self.hojas:
-            print("No tienes hojas de cálculo disponibles para editar.")
-            return
-
-        try:
-            indice = int(input("Selecciona el número de hoja: ")) - 1
-            if 0 <= indice < len(self.hojas):
-                hoja_seleccionada = self.hojas[indice]
-                hoja_id = self.obtener_hoja_id(hoja_seleccionada[1])
-                if hoja_id:
-                    self.editar_o_ver_hoja(hoja_id)
-            else:
-                print("Selección no válida.")
-        except ValueError:
-            print("Opción no válida. Debes ingresar un número entero.")
+        hoja_seleccionada = self._seleccionar_hoja("Selecciona el id de hoja: ")
+        if hoja_seleccionada:
+            hoja_id = self.obtener_hoja_id(hoja_seleccionada[1])
+            if hoja_id:
+                self.editar_o_ver_hoja(hoja_id)
 
     def editar_o_ver_hoja(self, hoja_id):
         permisos_respuesta = self.obtener_permisos_usuario(hoja_id)
         if permisos_respuesta["status"] != "ok":
-            print(permisos_respuesta["mensaje"])
             return
 
         permisos = permisos_respuesta.get("permisos")
         es_editable = permisos in ["lectura y escritura", "propietario"]
 
         if permisos not in ["lectura y escritura", "propietario", "solo lectura"]:
-            print("No tienes permisos suficientes para editar esta hoja.")
+            print("No tienes permisos para editar esta hoja")
             return
 
-        self.hoja_editada = hoja_id
-        self.hoja_dict = {}
+        self.hoja_editada_id = hoja_id
+        self.dict_celdas_hoja = {}
 
         respuesta = self.leer_datos_csv(hoja_id)
         if respuesta["status"] == "ok":
             self.imprimir_hoja_calculo()
 
         self.stop_edicion.clear()
+
         hilo_actualizaciones = threading.Thread(target=self.manejar_actualizaciones, daemon=True)
         hilo_actualizaciones.start()
 
@@ -91,192 +103,126 @@ class HojaCalculo:
             else:
                 self._ver_hoja_solo_lectura()
         except KeyboardInterrupt:
-            print("\nEdicion de hoja finalizada. Volviendo al menu principal...")
+            logging.info("Edicion de hoja finalizada")
         finally:
             self.stop_edicion.set()
             hilo_actualizaciones.join()
-            self.hoja_editada = None
+            self.hoja_editada_id = None
 
     def _editar_hoja(self, hoja_id):
         while not self.stop_edicion.is_set():
             celda = input("Celda: ").strip().upper()
             if not re.match(r'^[a-zA-Z]+\d+$', celda):
-                print("Formato de celda no valido. Intenta de nuevo.")
+                print("Formato no valido")
                 continue
 
             valor = input("Valor: ").strip()
             valor_evaluado = evaluar_expresion(valor)
 
             mensaje = {"accion": "editar_celda", "hoja_id": hoja_id, "celda": celda, "valor": valor_evaluado,
-                       "usuario_id": self.sesion.usuario_id}
-
+                       "usuario_id": self.sesion.usuario}
             Comunicacion.enviar_mensaje(mensaje, self.sesion.sock)
 
-    def _ver_hoja_solo_lectura(self):
-        while not self.stop_edicion.is_set():
-            continue
-
     def compartir_hoja(self):
-        if not self.hojas:
-            print("No tienes hojas de cálculo disponibles para editar.")
-            return
-        try:
-            indice = int(input("Selecciona el número de hoja: ")) - 1
-            if 0 <= indice < len(self.hojas):
-                hoja_seleccionada = self.hojas[indice]
-                hoja_id = self.obtener_hoja_id(hoja_seleccionada[1])
-                if hoja_id:
-                    nombre_usuario = input("Nombre del usuario con quien compartir: ")
-                    print("Selecciona el permiso que deseas otorgar:")
-                    print("1. Solo lectura")
-                    print("2. Lectura y escritura")
-                    permisos = "lectura y escritura" if input("Selecciona una opcion: ") == '2' else "solo lectura"
-                    mensaje = {"accion": "compartir_hoja", "hoja_id": hoja_id, "nombre_usuario": nombre_usuario,
-                               "permisos": permisos}
-                    respuesta = Comunicacion.enviar_y_recibir(mensaje, self.sesion.sock)
-                    print(respuesta["mensaje"])
-        except ValueError:
-            print("Opción no válida. Debes ingresar un número entero.")
+        hoja_seleccionada = self._seleccionar_hoja("Selecciona el id de hoja para compartir: ")
+        if hoja_seleccionada:
+            hoja_id = self.obtener_hoja_id(hoja_seleccionada[1])
+            permisos_respuesta = self.obtener_permisos_usuario(hoja_id)
+
+            if permisos_respuesta.get("status") != "ok":
+                return
+
+            if permisos_respuesta.get("permisos") == "propietario":
+                nombre_usuario = input("Usuario con quien quieres compartir el archivo: ")
+                permisos = "lectura y escritura" if input(
+                    "Tipo de acceso (1: Solo lectura, 2: Lectura y escritura): ") == '2' else "solo lectura"
+                mensaje = {"accion": "compartir_hoja", "hoja_id": hoja_id, "nombre_usuario": nombre_usuario,
+                           "permisos": permisos}
+                self._enviar_mensaje(mensaje)
+            else:
+                print("No tienes permisos suficientes para compartir esta hoja")
 
     def descargar_hoja(self):
-        if not self.hojas:
-            print("No tienes hojas de calculo disponibles para descargar.")
-            return
-        try:
-            indice = int(input("Selecciona el número de hoja: ")) - 1
-            if 0 <= indice < len(self.hojas):
-                hoja_seleccionada = self.hojas[indice]
-                hoja_nombre = hoja_seleccionada[1]
-                hoja_id = self.obtener_hoja_id(hoja_seleccionada[1])
-                if hoja_id:
-                    mensaje = {"accion": "descargar_hoja", "hoja_id": hoja_id}
-                    respuesta = Comunicacion.enviar_y_recibir(mensaje, self.sesion.sock)
-                    if respuesta["status"] == "ok":
-                        downloads_path = os.path.join(os.path.expanduser('~'), 'Downloads')
-                        nombre_archivo = os.path.join(downloads_path, f"{hoja_nombre}.csv")
-                        try:
-                            archivo = open(nombre_archivo, 'w', newline='')
-                            try:
-                                escritor = csv.writer(archivo)
-                                escritor.writerows(respuesta["contenido_csv"])
-                                print(f"Hoja de cálculo descargada y guardada en {nombre_archivo}")
-                            except Exception as e:
-                                return {"status": "error", "mensaje": f"Error al escribir en el archivo CSV: {e}"}
-                            finally:
-                                archivo.close()
-                        except Exception as e:
-                            return {"status": "error", "mensaje": f"Error al abrir el archivo CSV: {e}"}
-                    else:
-                        print(respuesta["mensaje"])
-            else:
-                print("Selección no válida.")
-        except ValueError:
-            print("Opción no válida. Debes ingresar un número entero.")
-
-    def eliminar_hoja(self):
-        if not self.hojas:
-            print("No tienes hojas de calculo disponibles.")
-            return
-
-        indice = int(input("Selecciona el número de hoja para eliminar: ")) - 1
-        if 0 <= indice < len(self.hojas):
-            hoja_seleccionada = self.hojas[indice]
+        hoja_seleccionada = self._seleccionar_hoja("Selecciona el id de hoja para descargar: ")
+        if hoja_seleccionada:
             hoja_id = self.obtener_hoja_id(hoja_seleccionada[1])
             if hoja_id:
+                mensaje = {"accion": "descargar_hoja", "hoja_id": hoja_id}
+                respuesta = self._enviar_mensaje(mensaje)
+                if respuesta["status"] == "ok":
+                    self.guardar_csv(respuesta["contenido_csv"], hoja_seleccionada[1])
+
+    def guardar_csv(self, contenido_csv, hoja_nombre):
+        downloads_path = os.path.join(os.path.expanduser('~'), 'Downloads')
+        nombre_archivo = os.path.join(downloads_path, f"{hoja_nombre}.csv")
+
+        try:
+            filas = [line.split(',') for line in contenido_csv.strip().split('\n')]
+            with open(nombre_archivo, 'w', newline='') as archivo:
+                csv.writer(archivo).writerows(filas)
+            print(f"Hoja de calculo descargada en {nombre_archivo}")
+        except Exception as e:
+            logging.error(f"Error al guardar el archivo CSV: {e}")
+
+    def eliminar_hoja(self):
+        hoja_seleccionada = self._seleccionar_hoja("Selecciona el id de hoja para eliminar: ")
+        if hoja_seleccionada:
+            hoja_id = self.obtener_hoja_id(hoja_seleccionada[1])
+            permisos_respuesta = self.obtener_permisos_usuario(hoja_id)
+
+            if permisos_respuesta.get("status") != "ok":
+                return
+
+            if permisos_respuesta.get("permisos") == "propietario":
                 mensaje = {"accion": "eliminar_hoja", "hoja_id": hoja_id, "usuario_id": self.sesion.usuario_id}
-                respuesta = Comunicacion.enviar_y_recibir(mensaje, self.sesion.sock)
-                print(respuesta["mensaje"])
-        else:
-            print("Selección no válida.")
+                self._enviar_mensaje(mensaje)
+                print("Hoja eliminada correctamente")
+            else:
+                print("No tienes permisos suficientes para eliminar esta hoja")
 
     def obtener_hoja_id(self, nombre):
         mensaje = {"accion": "obtener_hoja_id", "nombre": nombre, "usuario_id": self.sesion.usuario_id}
-        respuesta = Comunicacion.enviar_y_recibir(mensaje, self.sesion.sock)
-        if respuesta["status"] == "ok":
-            return respuesta["hoja_id"]
-        else:
-            print(respuesta["mensaje"])
-            return None
+        respuesta = self._enviar_mensaje(mensaje)
+        return respuesta.get("hoja_id")
 
     def obtener_permisos_usuario(self, hoja_id):
         mensaje = {"accion": "obtener_permisos", "hoja_id": hoja_id, "usuario_id": self.sesion.usuario_id}
-        return Comunicacion.enviar_y_recibir(mensaje, self.sesion.sock)
+        return self._enviar_mensaje(mensaje)
 
     def manejar_actualizaciones(self):
         try:
             while not self.stop_edicion.is_set():
-                try:
-                    readable, _, _ = select.select([self.sesion.sock], [], [], 1)
-                    if readable:
-                        respuesta = Comunicacion.recibir_mensaje(self.sesion.sock)
-                        if respuesta and respuesta.get("accion") == "actualizar_celda":
-                            hoja_id = respuesta.get("hoja_id")
-                            celda = respuesta.get("celda")
-                            valor = respuesta.get("valor")
-                            usuario_id = respuesta.get("usuario_id")
-                            if hoja_id == self.hoja_editada:
-                                print(
-                                    f"\nActualización recibida en hoja {hoja_id}: Celda {celda} = {valor} (Usuario ID: {usuario_id})")
-                                with self.update_lock:
-                                    self.hoja_dict[celda] = valor
-                                    self.imprimir_hoja_calculo()
-                except (socket.error, ConnectionResetError, OSError) as e:
-                    print(f"\nError: El servidor se desconectó inesperadamente. {e}")
-                    break
-        except Exception as e:
-            print(f"\nError en el hilo de actualizaciones: {e}")
+                readable, _, _ = select.select([self.sesion.sock], [], [], 1)
+                if readable:
+                    respuesta = Comunicacion.recibir_mensaje(self.sesion.sock)
+                    if respuesta and respuesta.get("accion") == "actualizar_celda" and respuesta.get(
+                            "hoja_id") == self.hoja_editada_id:
+                        with self.update_lock:
+                            self.dict_celdas_hoja[respuesta.get("celda")] = respuesta.get("valor")
+                            self.imprimir_hoja_calculo()
+        except (socket.error, ConnectionResetError, OSError) as e:
+            logging.error(f"Error: El servidor se desconecto inesperadamente. {e}")
         finally:
-            print("Hilo de actualizaciones terminado.")
+            logging.info("Hilo de actualizaciones terminado")
             self.stop_edicion.set()
 
     def leer_datos_csv(self, hoja_id):
         mensaje = {"accion": "leer_datos_csv", "hoja_id": hoja_id, "usuario_id": self.sesion.usuario_id}
-        respuesta = Comunicacion.enviar_y_recibir(mensaje, self.sesion.sock)
-
+        respuesta = self._enviar_mensaje(mensaje)
         if respuesta["status"] == "ok":
-            datos = respuesta["datos"]
-
-            self.hoja_dict = {}
-
-            if not datos or (len(datos) == 1 and not any(datos[0])):
-                return {"status": "ok", "datos": datos}
-
-            max_columnas = max(len(fila) for fila in datos)
-            for i, fila in enumerate(datos):
-                for j, valor in enumerate(fila):
-                    celda = f"{chr(65 + j)}{i + 1}"
-                    self.hoja_dict[celda] = valor
-
-                if len(fila) < max_columnas:
-                    fila.extend([''] * (max_columnas - len(fila)))
-
-            return {"status": "ok", "datos": datos}
-        else:
-            print(respuesta["mensaje"])
-            return {"status": "error", "mensaje": respuesta["mensaje"]}
+            self.dict_celdas_hoja = {f"{chr(65 + j)}{i + 1}": valor for i, fila in enumerate(respuesta["datos"]) for
+                                     j, valor in enumerate(fila)}
+            return {"status": "ok", "datos": respuesta["datos"]}
+        return {"status": "error"}
 
     def imprimir_hoja_calculo(self):
-        if not self.hoja_dict:
+        if not self.dict_celdas_hoja:
             return
+        max_fila = max(int(celda[1:]) for celda in self.dict_celdas_hoja)
+        datos = [["" for _ in range(max(ord(c[0]) for c in self.dict_celdas_hoja) - 64)] for _ in range(max_fila)]
+        for celda, valor in self.dict_celdas_hoja.items():
+            datos[int(celda[1:]) - 1][ord(celda[0]) - 65] = valor
 
-        max_fila = max(int(celda[1:]) for celda in self.hoja_dict)
-
-        datos = [[] for _ in range(max_fila)]
-        for celda, valor in self.hoja_dict.items():
-            col = ord(celda[0]) - 65
-            fila = int(celda[1:]) - 1
-            if len(datos[fila]) <= col:
-                datos[fila].extend([''] * (col - len(datos[fila]) + 1))
-            datos[fila][col] = valor
-
-        max_columnas = max(len(fila) for fila in datos)
-        for fila in datos:
-            if len(fila) < max_columnas:
-                fila.extend([''] * (max_columnas - len(fila)))
-
-        columnas = [""] + [chr(65 + i) for i in range(max_columnas)]
-        for i, fila in enumerate(datos):
-            datos[i] = [str(i + 1)] + fila
-
-        print("Contenido de la hoja de cálculo:")
-        print(tabulate(datos, headers=columnas, tablefmt="github"))
+        columnas = [""] + [chr(65 + i) for i in range(len(datos[0]))]
+        filas = [[str(i + 1)] + datos[i] for i in range(len(datos))]
+        print("\n", tabulate(filas, headers=columnas, tablefmt="github"))

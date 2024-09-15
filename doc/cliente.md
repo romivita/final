@@ -1,26 +1,14 @@
-class Cliente:
-Clase que representa el cliente que se conecta a un servidor para actualizar una hoja de calculo.
+# Cliente
 
-    Atributos:
-        host (str): Direccion del host del servidor.
-        port (int): Puerto del servidor.
-        nombre_hoja (str): Nombre de la hoja de calculo.
-        comunicacion (Comunicacion): Instancia de la clase Comunicacion para gestionar la comunicacion con el servidor.
-
-    Metodos:
-        conectar_servidor():
-            Conecta el cliente al servidor y envia el nombre de la hoja de calculo.
-
-        cerrar_conexion():
-            Cierra la conexion con el servidor.
-
-        actualizar_celda(fila, columna, valor):
-            Envia una actualizacion de celda al servidor.
-            
-            Args:
-                fila (int): Numero de fila de la celda.
-                columna (int): Numero de columna de la celda.
-                valor (str): Valor de la celda.
-
-        iniciar_interaccion():
-            Inicia la interaccion con el usuario para ingresar datos de la hoja de calculo.
+* **Conectarse al servidor**: Establece una conexión con el servidor y envía solicitudes.
+* **Iniciar sesión o crear una cuenta**: Envía credenciales de usuario al servidor para autenticar o registrar un nuevo
+  usuario.
+* **Listar hojas**: Muestra al usuario las hojas de cálculo que ha creado o tiene permisos de lectura o escritura.
+* **Crear una nueva hoja de cálculo**: Solicita al servidor la creación de una nueva hoja de cálculo.
+* **Editar celdas**: Envía cambios en las celdas de una hoja de cálculo al servidor.
+* **Compartir hojas**: Solicita compartir una hoja con otro usuario, asignándole permisos.
+* **Descargar hojas**: Solicita al servidor la descarga de una hoja de cálculo, en la carpeta Downloads
+* **Eliminar hojas**: Solicita al servidor la eliminacioón de una hoja de cálculo.
+* **Recibir actualizaciones**: Recibe notificaciones del servidor cuando otro usuario edita una hoja en la que está
+  trabajando.
+* **Desconectar**: Cierra la conexión con el servidor.
