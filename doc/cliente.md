@@ -1,5 +1,8 @@
 # Cliente
 
+Envía comandos para la manipulación de las hojas de cálculo y espera las respuestas correspondientes del servidor. Las
+solicitudes incluyen la evaluación de expresiones matemáticas y la modificación de celdas específicas.
+
 * **Conectarse al servidor**: Establece una conexión con el servidor y envía solicitudes.
 * **Iniciar sesión o crear una cuenta**: Envía credenciales de usuario al servidor para autenticar o registrar un nuevo
   usuario.
