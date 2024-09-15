@@ -1,9 +1,6 @@
 import json
-import socket
 import logging
-
-# Configuración básica de logging
-logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(levelname)s - %(message)s')
+import socket
 
 
 def manejar_excepciones(func):
@@ -15,7 +12,7 @@ def manejar_excepciones(func):
             raise
         except json.JSONDecodeError as e:
             logging.error(f"Error al decodificar JSON en {func.__name__}: {e}")
-            raise ValueError("El mensaje recibido no es un JSON válido.")
+            raise ValueError("El mensaje recibido no es un JSON valido")
         except ValueError as e:
             logging.error(f"ValueError en {func.__name__}: {e}")
             raise
@@ -32,15 +29,15 @@ class Comunicacion:
     @manejar_excepciones
     def enviar_mensaje(mensaje, conn):
         if not isinstance(mensaje, dict):
-            raise ValueError("El mensaje a enviar debe ser un diccionario.")
+            raise ValueError("El mensaje a enviar debe ser un diccionario")
 
         if mensaje is None:
-            raise ValueError("El mensaje a enviar no puede ser None.")
+            raise ValueError("El mensaje a enviar no puede ser None")
 
         mensaje_json = json.dumps(mensaje)
 
         if conn is None:
-            raise ConnectionError("La conexión es None, no se puede enviar el mensaje.")
+            raise ConnectionError("La conexion es None, no se puede enviar el mensaje")
 
         conn.sendall(mensaje_json.encode('utf-8'))
         logging.info(f"Mensaje enviado: {mensaje_json}")
@@ -49,11 +46,11 @@ class Comunicacion:
     @manejar_excepciones
     def recibir_mensaje(conn, buffer_size=4096):
         if conn is None:
-            raise ConnectionError("La conexión es None, no se puede recibir el mensaje.")
+            raise ConnectionError("La conexion es None, no se puede recibir el mensaje")
 
         data = conn.recv(buffer_size)
         if not data:
-            raise ConnectionError("No se recibieron datos, posible desconexión.")
+            raise ConnectionError("No se recibieron datos, posible desconexion")
 
         mensaje_json = data.decode('utf-8')
         mensaje = json.loads(mensaje_json)

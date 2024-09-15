@@ -13,7 +13,6 @@ class ColaDeEdiciones:
         self.servidor = servidor
         self.cola = queue.Queue()
         self.directorio_archivos = servidor.directorio_archivos
-        self.edit_lock = threading.Lock()
         self.stop_event = threading.Event()
 
         threading.Thread(target=self.procesar_cola_ediciones, daemon=True).start()
@@ -29,10 +28,14 @@ class ColaDeEdiciones:
         while self.servidor.activo:
             try:
                 hoja_id, celda, valor, usuario_id = self.cola.get()
-                resultado = self.aplicar_edicion(hoja_id, celda, valor)
-                if resultado["status"] == "ok":
-                    self.notificar_actualizacion(hoja_id, celda, valor, usuario_id)
-                self.cola.task_done()
+                try:
+                    resultado = self.aplicar_edicion(hoja_id, celda, valor)
+                    if resultado["status"] == "ok":
+                        self.notificar_actualizacion(hoja_id, celda, valor, usuario_id)
+                except Exception as e:
+                    logging.error(f"Error aplicando la edicion: {e}")
+                finally:
+                    self.cola.task_done()
             except queue.Empty:
                 continue
 
@@ -42,10 +45,15 @@ class ColaDeEdiciones:
             return {"status": "error", "mensaje": "Hoja no encontrada"}
 
         fila, columna = celda_a_indices(celda)
-        self.actualizar_celda(archivo_csv, fila, columna, valor)
-        return {"status": "ok", "mensaje": "Edición aplicada"}
+        try:
+            self.actualizar_celda(archivo_csv, fila, columna, valor)
+            return {"status": "ok", "mensaje": "Edicion aplicada"}
+        except Exception as e:
+            logging.error(f"Error actualizando la celda: {e}")
+            return {"status": "error", "mensaje": "Error actualizando la hoja"}
 
-    def actualizar_celda(self, archivo_csv, fila, columna, valor):
+    @staticmethod
+    def actualizar_celda(archivo_csv, fila, columna, valor):
         with open(archivo_csv, 'r', newline='') as archivo:
             contenido = list(csv.reader(archivo))
 
@@ -61,12 +69,12 @@ class ColaDeEdiciones:
             csv.writer(archivo).writerows(contenido)
 
     def notificar_actualizacion(self, hoja_id, celda, valor, usuario_id):
-        with self.edit_lock:
-            conexiones = self.servidor.clientes_hojas.get(hoja_id, [])
-            mensaje = {"accion": "actualizar_celda", "hoja_id": hoja_id, "celda": celda, "valor": valor,
-                       "usuario_id": usuario_id}
-            for conn in conexiones:
-                try:
-                    Comunicacion.enviar_mensaje(mensaje, conn)
-                except Exception as e:
-                    logging.error(f"Error notificando a un cliente: {e}")
+        conexiones = self.servidor.clientes_hojas.get(hoja_id, [])
+        mensaje = {"accion": "actualizar_celda", "hoja_id": hoja_id, "celda": celda, "valor": valor,
+                   "usuario_id": usuario_id}
+
+        for conn in conexiones:
+            try:
+                Comunicacion.enviar_mensaje(mensaje, conn)
+            except Exception as e:
+                logging.error(f"Error notificando a un cliente: {e}")

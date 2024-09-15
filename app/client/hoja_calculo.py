@@ -123,6 +123,10 @@ class HojaCalculo:
                        "usuario_id": self.sesion.usuario}
             Comunicacion.enviar_mensaje(mensaje, self.sesion.sock)
 
+    def _ver_hoja_solo_lectura(self):
+        while not self.stop_edicion.is_set():
+            continue
+
     def compartir_hoja(self):
         hoja_seleccionada = self._seleccionar_hoja("Selecciona el id de hoja para compartir: ")
         if hoja_seleccionada:

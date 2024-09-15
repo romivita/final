@@ -1,52 +1,39 @@
 import ast
+import logging
 import operator as op
+import re
 
-OPERADORES = {
-    ast.Add: op.add,
-    ast.Sub: op.sub,
-    ast.Mult: op.mul,
-    ast.Div: op.truediv,
-    ast.Mod: op.mod,
-    ast.Pow: op.pow,
-    ast.UAdd: op.pos,
-    ast.USub: op.neg
-}
+OPERADORES = {ast.Add: op.add, ast.Sub: op.sub, ast.Mult: op.mul, ast.Div: op.truediv, ast.Mod: op.mod, ast.Pow: op.pow,
+              ast.UAdd: op.pos, ast.USub: op.neg}
 
 
 def letra_a_indice(letra):
-    """Convierte una letra de columna (p.ej., 'A') a un índice de columna basado en 0 (p.ej., 0)."""
-    indice = 0
-    for caracter in letra.upper():
-        if 'A' <= caracter <= 'Z':
-            indice = indice * 26 + (ord(caracter) - ord('A') + 1)
-    return indice - 1
+    letra = letra.upper()
+    if not letra.isalpha():
+        raise ValueError(f"Letra invalida: {letra}")
+    return sum((ord(c) - ord('A') + 1) * (26 ** i) for i, c in enumerate(reversed(letra))) - 1
 
 
 def celda_a_indices(celda):
-    """Convierte una referencia de celda (p.ej., 'A1') a índices de fila y columna (p.ej., (0, 0))."""
-    columna_letras = ''.join(filter(str.isalpha, celda)).upper()
-    fila_numeros = ''.join(filter(str.isdigit, celda))
+    match = re.fullmatch(r"([A-Z]+)(\d+)", celda.upper())
+    if not match:
+        raise ValueError(f"Referencia de celda invalida: {celda}")
 
-    if not columna_letras or not fila_numeros:
-        raise ValueError(f"Referencia de celda inválida: {celda}")
-
+    columna_letras, fila_numeros = match.groups()
     columna = letra_a_indice(columna_letras)
     fila = int(fila_numeros) - 1
     return fila, columna
 
+
 def eliminar_ceros_a_la_izquierda(expresion):
-    """Elimina ceros a la izquierda en números enteros de una expresión matemática"""
-    import re
     return re.sub(r'\b0+(\d)', r'\1', expresion)
 
+
 def evaluar_expresion(expresion):
-    """Evalúa una expresión matemática dada como string. Si la expresión comienza con '=', se evalúa,
-    en caso contrario, se devuelve tal cual."""
     if not expresion.startswith('='):
         return expresion
 
-    expresion = expresion[1:]
-    expresion = eliminar_ceros_a_la_izquierda(expresion)
+    expresion = eliminar_ceros_a_la_izquierda(expresion[1:])
 
     try:
         tree = ast.parse(expresion, mode='eval')
@@ -61,7 +48,7 @@ def evaluar_expresion(expresion):
             elif isinstance(node, ast.UnaryOp):
                 operand = eval_ast(node.operand)
                 return OPERADORES[type(node.op)](operand)
-            elif isinstance(node, (ast.Num, ast.Constant)):
+            elif isinstance(node, (ast.Constant, ast.Num)):
                 return node.n if isinstance(node, ast.Num) else node.value
             else:
                 raise TypeError(f"Tipo de nodo no soportado: {type(node)}")
@@ -69,5 +56,5 @@ def evaluar_expresion(expresion):
         return eval_ast(tree.body)
 
     except (TypeError, ValueError, SyntaxError) as e:
-        print(f"Error al evaluar la expresión: {e}")
+        logging.error(f"Error al evaluar la expresion: {e}")
         return f"={expresion}"

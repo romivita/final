@@ -10,6 +10,11 @@ from cola_ediciones import ColaDeEdiciones
 from comunicacion import Comunicacion
 from gestor_hojas import GestorDeHojas
 
+ACCIONES = {"iniciar_sesion": "iniciar_sesion", "crear_hoja": "crear_hoja", "listar_hojas": "listar_hojas",
+            "obtener_hoja_id": "obtener_hoja_id", "obtener_permisos": "obtener_permisos",
+            "leer_datos_csv": "leer_datos_csv", "editar_celda": "editar_celda", "compartir_hoja": "compartir_hoja",
+            "descargar_hoja": "descargar_hoja", "eliminar_hoja": "eliminar_hoja", "desconectar": "desconectar"}
+
 
 class Servidor:
     def __init__(self, host, port):
@@ -79,8 +84,8 @@ class Servidor:
                     break
                 respuesta = self.procesar_mensaje(mensaje, conn)
                 Comunicacion.enviar_mensaje(respuesta, conn)
-                if mensaje.get('accion') == 'desconectar':
-                    logging.info(f"Cliente {addr} ha solicitado desconexion.")
+                if mensaje.get('accion') == ACCIONES["desconectar"]:
+                    logging.info(f"Cliente {addr} ha solicitado desconexion")
                     break
         except (ConnectionResetError, ConnectionAbortedError):
             logging.warning(f"Conexion terminada abruptamente desde {addr}")
@@ -93,14 +98,11 @@ class Servidor:
 
     def eliminar_conexion(self, conn):
         with self.lock:
-            hojas_a_eliminar = []
-            for hoja_id, conexiones in self.clientes_hojas.items():
-                if conn in conexiones:
-                    conexiones.remove(conn)
-                    if not conexiones:
-                        hojas_a_eliminar.append(hoja_id)
+            hojas_a_eliminar = [hoja_id for hoja_id, conexiones in self.clientes_hojas.items() if conn in conexiones]
             for hoja_id in hojas_a_eliminar:
-                del self.clientes_hojas[hoja_id]
+                self.clientes_hojas[hoja_id].remove(conn)
+                if not self.clientes_hojas[hoja_id]:
+                    del self.clientes_hojas[hoja_id]
 
     def terminar_servidor(self, sig=None, frame=None):
         logging.info("Terminando servidor...")
@@ -127,28 +129,27 @@ class Servidor:
 
     def procesar_mensaje(self, mensaje, conn):
         accion = mensaje.get("accion")
-
-        if accion == "iniciar_sesion":
-            return self.gestor_sesiones.iniciar_sesion(mensaje, conn)
-        elif accion == "crear_hoja":
-            return self.gestor_hojas.crear_hoja(mensaje, conn)
-        elif accion == "listar_hojas":
-            return self.gestor_hojas.listar_hojas(mensaje)
-        elif accion == "obtener_hoja_id":
-            return self.gestor_hojas.obtener_hoja_id(mensaje)
-        elif mensaje['accion'] == 'obtener_permisos':
-            return self.gestor_hojas.obtener_permisos_usuario(mensaje)
-        elif mensaje['accion'] == 'leer_datos_csv':
-            return self.gestor_hojas.leer_datos_csv(mensaje, conn)
-        elif accion == "editar_celda":
-            return self.gestor_hojas.editar_celda(mensaje, conn)
-        elif mensaje['accion'] == 'compartir_hoja':
-            return self.gestor_hojas.compartir_hoja(mensaje)
-        elif accion == "descargar_hoja":
-            return self.gestor_hojas.descargar_hoja(mensaje)
-        elif accion == "eliminar_hoja":
-            return self.gestor_hojas.eliminar_hoja(mensaje)
-        elif accion == "desconectar":
-            return {"status": "ok", "mensaje": "Desconectado"}
-        else:
-            return {"status": "error", "mensaje": "Accion desconocida"}
+        if accion in ACCIONES:
+            if accion == ACCIONES["iniciar_sesion"]:
+                return self.gestor_sesiones.iniciar_sesion(mensaje, conn)
+            elif accion == ACCIONES["crear_hoja"]:
+                return self.gestor_hojas.crear_hoja(mensaje, conn)
+            elif accion == ACCIONES["listar_hojas"]:
+                return self.gestor_hojas.listar_hojas(mensaje, conn)
+            elif accion == ACCIONES["obtener_hoja_id"]:
+                return self.gestor_hojas.obtener_hoja_id(mensaje)
+            elif accion == ACCIONES["obtener_permisos"]:
+                return self.gestor_hojas.obtener_permisos_usuario(mensaje)
+            elif accion == ACCIONES["leer_datos_csv"]:
+                return self.gestor_hojas.leer_datos_csv(mensaje, conn)
+            elif accion == ACCIONES["editar_celda"]:
+                return self.gestor_hojas.editar_celda(mensaje, conn)
+            elif accion == ACCIONES["compartir_hoja"]:
+                return self.gestor_hojas.compartir_hoja(mensaje)
+            elif accion == ACCIONES["descargar_hoja"]:
+                return self.gestor_hojas.descargar_hoja(mensaje)
+            elif accion == ACCIONES["eliminar_hoja"]:
+                return self.gestor_hojas.eliminar_hoja(mensaje)
+            elif accion == ACCIONES["desconectar"]:
+                return {"status": "ok", "mensaje": "Desconectado"}
+        return {"status": "error", "mensaje": "Accion desconocida"}
