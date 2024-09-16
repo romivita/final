@@ -46,6 +46,3 @@ def init_db():
                         FOREIGN KEY (hoja_id) REFERENCES hojas_calculo (id),
                         FOREIGN KEY (usuario_id) REFERENCES usuarios (id),
                         UNIQUE(hoja_id, usuario_id))''')
-
-
-init_db()
