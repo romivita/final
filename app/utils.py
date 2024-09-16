@@ -3,8 +3,16 @@ import logging
 import operator as op
 import re
 
-OPERADORES = {ast.Add: op.add, ast.Sub: op.sub, ast.Mult: op.mul, ast.Div: op.truediv, ast.Mod: op.mod, ast.Pow: op.pow,
-              ast.UAdd: op.pos, ast.USub: op.neg}
+OPERADORES = {
+    ast.Add: op.add,
+    ast.Sub: op.sub,
+    ast.Mult: op.mul,
+    ast.Div: op.truediv,
+    ast.Mod: op.mod,
+    ast.Pow: op.pow,
+    ast.UAdd: op.pos,
+    ast.USub: op.neg
+}
 
 
 def letra_a_indice(letra):

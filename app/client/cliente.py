@@ -6,14 +6,17 @@ from config_util import cargar_configuracion
 from hoja_calculo import HojaCalculo
 from sesion import Sesion
 
-logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.ERROR,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%d/%m/%Y %H:%M:%S'
+)
 
 
 class Cliente:
     def __init__(self, usuario, host, port):
         self.sesion = Sesion(usuario, host, port)
         self.hoja_calculo = HojaCalculo(self.sesion)
-        self.stop_event = self.sesion.stop_event
 
     @staticmethod
     def mostrar_menu():
@@ -25,9 +28,13 @@ class Cliente:
         print("5. Eliminar hoja de calculo")
 
     def seleccionar_opcion(self, opcion):
-        opciones = {'1': self.hoja_calculo.crear_hoja, '2': self.hoja_calculo.seleccionar_hoja,
-                    '3': self.hoja_calculo.compartir_hoja, '4': self.hoja_calculo.descargar_hoja,
-                    '5': self.hoja_calculo.eliminar_hoja}
+        opciones = {
+            '1': self.hoja_calculo.crear_hoja,
+            '2': self.hoja_calculo.seleccionar_hoja,
+            '3': self.hoja_calculo.compartir_hoja,
+            '4': self.hoja_calculo.descargar_hoja,
+            '5': self.hoja_calculo.eliminar_hoja
+        }
 
         accion = opciones.get(opcion)
         if accion:
@@ -37,19 +44,19 @@ class Cliente:
 
     def run(self):
         try:
-            while not self.stop_event.is_set():
+            while True:
                 self.hoja_calculo.listar_hojas()
                 self.mostrar_menu()
                 opcion = input("Selecciona una opcion: ")
                 self.seleccionar_opcion(opcion)
         except KeyboardInterrupt:
-            print("\nAdios 👋")
+            print("\nCerrando sesion")
         except ValueError as e:
             logging.error(f"Error de valor: {e}")
         except ConnectionError as e:
             logging.error(f"Error de conexion: {e}")
         except Exception as e:
-            logging.exception(f"Error inesperado: {e}")
+            logging.error(f"Error inesperado: {e}")
         finally:
             self.sesion.desconectar()
 

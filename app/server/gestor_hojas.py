@@ -9,9 +9,9 @@ class GestorDeHojas:
         self.servidor = servidor
         self.directorio_archivos = servidor.directorio_archivos
 
-    def crear_hoja(self, mensaje, conn):
-        nombre_hoja = mensaje['nombre']
-        usuario_id = mensaje['usuario_id']
+    def crear_hoja(self, mensaje):
+        nombre_hoja = mensaje.get("nombre")
+        usuario_id = mensaje.get("usuario_id")
 
         with Database() as db:
             hoja_existe = db.query('SELECT id FROM hojas_calculo WHERE nombre=? AND creador_id=?',
@@ -38,7 +38,7 @@ class GestorDeHojas:
 
     def listar_hojas(self, mensaje, conn):
         self.servidor.eliminar_conexion(conn)
-        usuario_id = mensaje['usuario_id']
+        usuario_id = mensaje.get("usuario_id")
         hojas = {"hojas_creadas": self.obtener_hojas_con_permisos(usuario_id, 'propietario'),
                  "hojas_lectura_escritura": self.obtener_hojas_con_permisos(usuario_id, 'lectura y escritura'),
                  "hojas_solo_lectura": self.obtener_hojas_con_permisos(usuario_id, 'solo lectura')}
@@ -59,8 +59,8 @@ class GestorDeHojas:
 
     @staticmethod
     def obtener_hoja_id(mensaje):
-        nombre_hoja = mensaje['nombre']
-        usuario_id = mensaje['usuario_id']
+        nombre_hoja = mensaje.get("nombre")
+        usuario_id = mensaje.get("usuario_id")
 
         with Database() as db:
             hoja = db.query('SELECT id FROM hojas_calculo WHERE nombre=? AND creador_id=?', (nombre_hoja, usuario_id),
@@ -79,15 +79,15 @@ class GestorDeHojas:
             return {"status": "error", "mensaje": "No se encontro la hoja"}
 
     def editar_celda(self, mensaje, conn):
-        hoja_id = mensaje['hoja_id']
+        hoja_id = mensaje.get("hoja_id")
         self.servidor.cola_ediciones.agregar_edicion(mensaje)
         self.servidor.asociar_cliente_hoja(conn, hoja_id)
         return {"status": "ok", "mensaje": "Edicion registrada"}
 
     def compartir_hoja(self, mensaje):
-        hoja_id = mensaje['hoja_id']
-        nombre_usuario = mensaje['nombre_usuario']
-        permisos = mensaje['permisos']
+        hoja_id = mensaje.get("hoja_id")
+        nombre_usuario = mensaje.get("nombre_usuario")
+        permisos = mensaje.get("permisos")
 
         with Database() as db:
             usuario = db.query('SELECT id FROM usuarios WHERE usuario=?', (nombre_usuario,), one=True)
@@ -109,8 +109,8 @@ class GestorDeHojas:
         return {"status": "ok", "mensaje": "Permisos otorgados"}
 
     def obtener_permisos_usuario(self, mensaje):
-        hoja_id = mensaje['hoja_id']
-        usuario_id = mensaje['usuario_id']
+        hoja_id = mensaje.get("hoja_id")
+        usuario_id = mensaje.get("usuario_id")
 
         with Database() as db:
             permisos = db.query('SELECT permisos FROM permisos WHERE hoja_id=? AND usuario_id=?', (hoja_id, usuario_id),
@@ -122,7 +122,7 @@ class GestorDeHojas:
             return None
 
     def leer_datos_csv(self, mensaje, conn):
-        hoja_id = mensaje['hoja_id']
+        hoja_id = mensaje.get("hoja_id")
         archivo_csv = os.path.join(self.directorio_archivos, f'{hoja_id}.csv')
 
         if os.path.exists(archivo_csv):
@@ -134,7 +134,7 @@ class GestorDeHojas:
             return {"status": "error", "mensaje": "Archivo no encontrado"}
 
     def descargar_hoja(self, mensaje):
-        hoja_id = mensaje['hoja_id']
+        hoja_id = mensaje.get("hoja_id")
         archivo_csv = os.path.join(self.directorio_archivos, f'{hoja_id}.csv')
 
         if os.path.exists(archivo_csv):
@@ -145,7 +145,7 @@ class GestorDeHojas:
             return {"status": "error", "mensaje": "No se encontro el archivo"}
 
     def eliminar_hoja(self, mensaje):
-        hoja_id = mensaje['hoja_id']
+        hoja_id = mensaje.get("hoja_id")
 
         with Database() as db:
             db.execute('DELETE FROM hojas_calculo WHERE id=?', (hoja_id,))

@@ -2,7 +2,6 @@ import logging
 import os
 import signal
 import socket
-import sys
 import threading
 
 from autenticacion import Autenticacion
@@ -10,10 +9,19 @@ from cola_ediciones import ColaDeEdiciones
 from comunicacion import Comunicacion
 from gestor_hojas import GestorDeHojas
 
-ACCIONES = {"iniciar_sesion": "iniciar_sesion", "crear_hoja": "crear_hoja", "listar_hojas": "listar_hojas",
-            "obtener_hoja_id": "obtener_hoja_id", "obtener_permisos": "obtener_permisos",
-            "leer_datos_csv": "leer_datos_csv", "editar_celda": "editar_celda", "compartir_hoja": "compartir_hoja",
-            "descargar_hoja": "descargar_hoja", "eliminar_hoja": "eliminar_hoja", "desconectar": "desconectar"}
+ACCIONES = {
+    "iniciar_sesion": "iniciar_sesion",
+    "crear_hoja": "crear_hoja",
+    "listar_hojas": "listar_hojas",
+    "obtener_hoja_id": "obtener_hoja_id",
+    "obtener_permisos": "obtener_permisos",
+    "leer_datos_csv": "leer_datos_csv",
+    "editar_celda": "editar_celda",
+    "compartir_hoja": "compartir_hoja",
+    "descargar_hoja": "descargar_hoja",
+    "eliminar_hoja": "eliminar_hoja",
+    "desconectar": "desconectar"
+}
 
 
 class Servidor:
@@ -24,7 +32,8 @@ class Servidor:
         self.sock_v6 = None
         self.clientes_hojas = {}
         self.lock = threading.Lock()
-        self.activo = True
+        self.activo = threading.Event()
+        self.activo.set()
 
         self.directorio_archivos = os.path.join(os.path.dirname(__file__), '..', 'hojas_de_calculo')
         os.makedirs(self.directorio_archivos, exist_ok=True)
@@ -65,7 +74,7 @@ class Servidor:
 
     def escuchar_conexiones(self, sock):
         logging.info(f"Servidor escuchando en {sock.getsockname()}")
-        while self.activo:
+        while self.activo.is_set():
             try:
                 sock.settimeout(1.0)
                 conn, addr = sock.accept()
@@ -78,17 +87,17 @@ class Servidor:
     def manejar_cliente(self, conn, addr):
         logging.info(f"Conexion desde {addr}")
         try:
-            while self.activo:
+            while self.activo.is_set():
                 mensaje = Comunicacion.recibir_mensaje(conn)
                 if not mensaje:
                     break
                 respuesta = self.procesar_mensaje(mensaje, conn)
                 Comunicacion.enviar_mensaje(respuesta, conn)
                 if mensaje.get('accion') == ACCIONES["desconectar"]:
-                    logging.info(f"Cliente {addr} ha solicitado desconexion")
+                    logging.info(f"Desconectar cliente {addr}")
                     break
         except (ConnectionResetError, ConnectionAbortedError):
-            logging.warning(f"Conexion terminada abruptamente desde {addr}")
+            logging.warning(f"Conexion interrumpida desde {addr}")
         except Exception as e:
             logging.error(f"Error manejando cliente {addr}: {e}")
         finally:
@@ -105,11 +114,13 @@ class Servidor:
                     del self.clientes_hojas[hoja_id]
 
     def terminar_servidor(self, sig=None, frame=None):
-        logging.info("Terminando servidor...")
-        self.activo = False
+        self.activo.clear()
+
         self.cerrar_socket(self.sock_v4)
         self.cerrar_socket(self.sock_v6)
-        sys.exit(0)
+        self.cola_ediciones.detener_ediciones()
+
+        logging.info("Servidor detenido.")
 
     def cerrar_socket(self, sock):
         if sock:
@@ -133,7 +144,7 @@ class Servidor:
             if accion == ACCIONES["iniciar_sesion"]:
                 return self.gestor_sesiones.iniciar_sesion(mensaje, conn)
             elif accion == ACCIONES["crear_hoja"]:
-                return self.gestor_hojas.crear_hoja(mensaje, conn)
+                return self.gestor_hojas.crear_hoja(mensaje)
             elif accion == ACCIONES["listar_hojas"]:
                 return self.gestor_hojas.listar_hojas(mensaje, conn)
             elif accion == ACCIONES["obtener_hoja_id"]:

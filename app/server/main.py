@@ -6,7 +6,11 @@ from config_util import cargar_configuracion
 from database_util import init_db
 from servidor import Servidor
 
-logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.ERROR,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%d/%m/%Y %H:%M:%S'
+)
 
 if __name__ == "__main__":
     config_host, config_port = cargar_configuracion()

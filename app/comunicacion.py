@@ -17,7 +17,7 @@ def manejar_excepciones(func):
             logging.error(f"ValueError en {func.__name__}: {e}")
             raise
         except Exception as e:
-            logging.exception(f"Error inesperado en {func.__name__}: {e}")
+            logging.error(f"Error inesperado en {func.__name__}: {e}")
             raise
 
     return wrapper
@@ -40,7 +40,7 @@ class Comunicacion:
             raise ConnectionError("La conexion es None, no se puede enviar el mensaje")
 
         conn.sendall(mensaje_json.encode('utf-8'))
-        logging.info(f"Mensaje enviado: {mensaje_json}")
+        logging.info(f"{mensaje_json}")
 
     @staticmethod
     @manejar_excepciones
@@ -54,7 +54,7 @@ class Comunicacion:
 
         mensaje_json = data.decode('utf-8')
         mensaje = json.loads(mensaje_json)
-        logging.info(f"Mensaje recibido: {mensaje_json}")
+        logging.info(f"{mensaje_json}")
         return mensaje
 
     @staticmethod

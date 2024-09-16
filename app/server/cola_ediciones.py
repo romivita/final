@@ -13,24 +13,25 @@ class ColaDeEdiciones:
         self.servidor = servidor
         self.cola = queue.Queue()
         self.directorio_archivos = servidor.directorio_archivos
-        self.stop_event = threading.Event()
+        self.event_cola = threading.Event()
 
-        threading.Thread(target=self.procesar_cola_ediciones, daemon=True).start()
+        self.thread_cola = threading.Thread(target=self.procesar_cola_ediciones)
+        self.thread_cola.start()
 
     def agregar_edicion(self, mensaje):
-        hoja_id = mensaje['hoja_id']
-        celda = mensaje['celda']
-        valor = mensaje['valor']
-        usuario_id = mensaje['usuario_id']
+        hoja_id = mensaje.get("hoja_id")
+        celda = mensaje.get("celda")
+        valor = mensaje.get("valor")
+        usuario_id = mensaje.get("usuario_id")
         self.cola.put((hoja_id, celda, valor, usuario_id))
 
     def procesar_cola_ediciones(self):
-        while self.servidor.activo:
+        while not self.event_cola.is_set():
             try:
-                hoja_id, celda, valor, usuario_id = self.cola.get()
+                hoja_id, celda, valor, usuario_id = self.cola.get(timeout=1)
                 try:
-                    resultado = self.aplicar_edicion(hoja_id, celda, valor)
-                    if resultado["status"] == "ok":
+                    respuesta = self.aplicar_edicion(hoja_id, celda, valor)
+                    if respuesta.get("status") == "ok":
                         self.notificar_actualizacion(hoja_id, celda, valor, usuario_id)
                 except Exception as e:
                     logging.error(f"Error aplicando la edicion: {e}")
@@ -78,3 +79,7 @@ class ColaDeEdiciones:
                 Comunicacion.enviar_mensaje(mensaje, conn)
             except Exception as e:
                 logging.error(f"Error notificando a un cliente: {e}")
+
+    def detener_ediciones(self):
+        self.event_cola.set()
+        self.thread_cola.join()

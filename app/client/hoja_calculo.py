@@ -18,21 +18,21 @@ class HojaCalculo:
         self.hoja_editada_id = None
         self.lista_hojas = []
         self.dict_celdas_hoja = {}
-        self.update_lock = threading.Lock()
-        self.stop_edicion = self.sesion.stop_edicion
+        self.lock = threading.Lock()
+        self.event_edicion = threading.Event()
 
     def _enviar_mensaje(self, mensaje):
         respuesta = Comunicacion.enviar_y_recibir(mensaje, self.sesion.sock)
-        if respuesta["status"] != "ok":
+        if respuesta.get("status") != "ok":
             logging.error(f"Error al enviar mensaje: {respuesta.get('mensaje')}")
         return respuesta
 
     def _obtener_hojas(self):
         mensaje = {"accion": "listar_hojas", "usuario_id": self.sesion.usuario_id}
         respuesta = self._enviar_mensaje(mensaje)
-        if respuesta['status'] == 'ok':
-            self.lista_hojas = respuesta['hojas_creadas'] + respuesta['hojas_lectura_escritura'] + respuesta[
-                'hojas_solo_lectura']
+        if respuesta.get("status") == "ok":
+            self.lista_hojas = respuesta.get("hojas_creadas") + respuesta.get(
+                "hojas_lectura_escritura") + respuesta.get("hojas_solo_lectura")
         else:
             logging.error("Error obteniendo las hojas de calculo")
 
@@ -49,8 +49,8 @@ class HojaCalculo:
         nombre = input("Nombre de la hoja de calculo: ")
         mensaje = {"accion": "crear_hoja", "nombre": nombre, "usuario_id": self.sesion.usuario_id}
         respuesta = self._enviar_mensaje(mensaje)
-        if respuesta["status"] == "ok":
-            self.editar_o_ver_hoja(respuesta["hoja_id"])
+        if respuesta.get("status") == "ok":
+            self.editar_o_ver_hoja(respuesta.get("hoja_id"))
 
     def _seleccionar_hoja(self, prompt):
         self._obtener_hojas()
@@ -75,7 +75,7 @@ class HojaCalculo:
 
     def editar_o_ver_hoja(self, hoja_id):
         permisos_respuesta = self.obtener_permisos_usuario(hoja_id)
-        if permisos_respuesta["status"] != "ok":
+        if permisos_respuesta.get("status") != "ok":
             return
 
         permisos = permisos_respuesta.get("permisos")
@@ -89,12 +89,12 @@ class HojaCalculo:
         self.dict_celdas_hoja = {}
 
         respuesta = self.leer_datos_csv(hoja_id)
-        if respuesta["status"] == "ok":
+        if respuesta.get("status") == "ok":
             self.imprimir_hoja_calculo()
 
-        self.stop_edicion.clear()
+        self.event_edicion.clear()
 
-        hilo_actualizaciones = threading.Thread(target=self.manejar_actualizaciones, daemon=True)
+        hilo_actualizaciones = threading.Thread(target=self.manejar_actualizaciones)
         hilo_actualizaciones.start()
 
         try:
@@ -105,12 +105,12 @@ class HojaCalculo:
         except KeyboardInterrupt:
             logging.info("Edicion de hoja finalizada")
         finally:
-            self.stop_edicion.set()
+            self.event_edicion.set()
             hilo_actualizaciones.join()
             self.hoja_editada_id = None
 
     def _editar_hoja(self, hoja_id):
-        while not self.stop_edicion.is_set():
+        while not self.event_edicion.is_set():
             celda = input("Celda: ").strip().upper()
             if not re.match(r'^[a-zA-Z]+\d+$', celda):
                 print("Formato no valido")
@@ -124,7 +124,7 @@ class HojaCalculo:
             Comunicacion.enviar_mensaje(mensaje, self.sesion.sock)
 
     def _ver_hoja_solo_lectura(self):
-        while not self.stop_edicion.is_set():
+        while not self.event_edicion.is_set():
             continue
 
     def compartir_hoja(self):
@@ -153,10 +153,11 @@ class HojaCalculo:
             if hoja_id:
                 mensaje = {"accion": "descargar_hoja", "hoja_id": hoja_id}
                 respuesta = self._enviar_mensaje(mensaje)
-                if respuesta["status"] == "ok":
-                    self.guardar_csv(respuesta["contenido_csv"], hoja_seleccionada[1])
+                if respuesta.get("status") == "ok":
+                    self.guardar_csv(respuesta.get("contenido_csv"), hoja_seleccionada[1])
 
-    def guardar_csv(self, contenido_csv, hoja_nombre):
+    @staticmethod
+    def guardar_csv(contenido_csv, hoja_nombre):
         downloads_path = os.path.join(os.path.expanduser('~'), 'Downloads')
         nombre_archivo = os.path.join(downloads_path, f"{hoja_nombre}.csv")
 
@@ -195,28 +196,27 @@ class HojaCalculo:
 
     def manejar_actualizaciones(self):
         try:
-            while not self.stop_edicion.is_set():
+            while not self.event_edicion.is_set():
                 readable, _, _ = select.select([self.sesion.sock], [], [], 1)
                 if readable:
                     respuesta = Comunicacion.recibir_mensaje(self.sesion.sock)
                     if respuesta and respuesta.get("accion") == "actualizar_celda" and respuesta.get(
                             "hoja_id") == self.hoja_editada_id:
-                        with self.update_lock:
+                        with self.lock:
                             self.dict_celdas_hoja[respuesta.get("celda")] = respuesta.get("valor")
-                            self.imprimir_hoja_calculo()
+                        self.imprimir_hoja_calculo()
         except (socket.error, ConnectionResetError, OSError) as e:
             logging.error(f"Error: El servidor se desconecto inesperadamente. {e}")
         finally:
             logging.info("Hilo de actualizaciones terminado")
-            self.stop_edicion.set()
 
     def leer_datos_csv(self, hoja_id):
         mensaje = {"accion": "leer_datos_csv", "hoja_id": hoja_id, "usuario_id": self.sesion.usuario_id}
         respuesta = self._enviar_mensaje(mensaje)
-        if respuesta["status"] == "ok":
-            self.dict_celdas_hoja = {f"{chr(65 + j)}{i + 1}": valor for i, fila in enumerate(respuesta["datos"]) for
+        if respuesta.get("status") == "ok":
+            self.dict_celdas_hoja = {f"{chr(65 + j)}{i + 1}": valor for i, fila in enumerate(respuesta.get("datos")) for
                                      j, valor in enumerate(fila)}
-            return {"status": "ok", "datos": respuesta["datos"]}
+            return {"status": "ok", "datos": respuesta.get("datos")}
         return {"status": "error"}
 
     def imprimir_hoja_calculo(self):

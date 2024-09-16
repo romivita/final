@@ -8,8 +8,8 @@ class Autenticacion:
         self.servidor = servidor
 
     def iniciar_sesion(self, mensaje, conn):
-        usuario = mensaje['usuario']
-        pwd_hash = hashlib.sha256(mensaje['pwd'].encode()).hexdigest()
+        usuario = mensaje.get("usuario")
+        pwd_hash = hashlib.sha256(mensaje.get("pwd").encode()).hexdigest()
 
         with Database() as db:
             usuario_data = db.query('SELECT id, pwd_hash FROM usuarios WHERE usuario=?', (usuario,), one=True)

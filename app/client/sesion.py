@@ -2,7 +2,6 @@ import getpass
 import logging
 import socket
 import sys
-import threading
 
 from comunicacion import Comunicacion
 
@@ -13,9 +12,6 @@ class Sesion:
         self.host = host
         self.port = port
         self.sock = None
-        self.lock = threading.Lock()
-        self.stop_event = threading.Event()
-        self.stop_edicion = threading.Event()
 
         self.conectar_servidor()
         self.usuario_id = self.autenticar_usuario()
@@ -42,22 +38,22 @@ class Sesion:
 
     def _validar_autenticacion(self, respuesta):
         if respuesta.get("status") == "ok":
-            return respuesta["usuario_id"]
+            return respuesta.get("usuario_id")
         sys.exit("Error de autenticacion. Saliendo...")
 
     def desconectar(self):
         if self.sock:
             try:
                 mensaje = {"accion": "desconectar"}
-                Comunicacion.enviar_mensaje(mensaje, self.sock)
+                respuesta = Comunicacion.enviar_y_recibir(mensaje, self.sock)
+                if respuesta.get("status") == "ok":
+                    logging.info(respuesta.get("mensaje"))
             except Exception as e:
-                logging.exception(f"Error al enviar mensaje de desconexion: {e}")
+                logging.error(f"Error al enviar mensaje de desconexion: {e}")
             finally:
                 self._cerrar_sesion()
 
     def _cerrar_sesion(self):
-        self.stop_event.set()
-        self.stop_edicion.set()
         if self.sock:
             self.sock.close()
         logging.info("Cliente desconectado")
