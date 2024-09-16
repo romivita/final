@@ -44,6 +44,10 @@ def evaluar_expresion(expresion):
             elif isinstance(node, ast.BinOp):
                 left = eval_ast(node.left)
                 right = eval_ast(node.right)
+
+                if isinstance(node.op, ast.Div) and right == 0:
+                    raise ZeroDivisionError("Intento de división por cero.")
+
                 return OPERADORES[type(node.op)](left, right)
             elif isinstance(node, ast.UnaryOp):
                 operand = eval_ast(node.operand)
@@ -55,6 +59,9 @@ def evaluar_expresion(expresion):
 
         return eval_ast(tree.body)
 
-    except (TypeError, ValueError, SyntaxError) as e:
-        logging.error(f"Error al evaluar la expresion: {e}")
-        return f"={expresion}"
+    except ZeroDivisionError as e:
+        logging.error(f"Error: {e}")
+        return "Error: División por cero."
+    except (SyntaxError, TypeError, ValueError) as e:
+        logging.error(f"Error de formato o sintaxis: {e}")
+        return f"Error: ={expresion}"
