@@ -112,7 +112,7 @@ class HojaCalculo:
     def _editar_hoja(self, hoja_id):
         while not self.event_edicion.is_set():
             celda = input("Celda: ").strip().upper()
-            if not re.match(r'^[a-zA-Z]+\d+$', celda):
+            if not re.match(r'^[A-Za-z]\d+$', celda):
                 print("Formato no valido")
                 continue
 
