@@ -16,7 +16,7 @@
 
 ```bash
 git clone https://github.com/romivita/final
-cd final/app
+cd app
 ```
 
 3. **Configurar `config.ini`:**
