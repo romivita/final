@@ -57,27 +57,6 @@ class GestorDeHojas:
 
         return hojas
 
-    @staticmethod
-    def obtener_hoja_id(mensaje):
-        nombre_hoja = mensaje.get("nombre")
-        usuario_id = mensaje.get("usuario_id")
-
-        with Database() as db:
-            hoja = db.query('SELECT id FROM hojas_calculo WHERE nombre=? AND creador_id=?', (nombre_hoja, usuario_id),
-                            one=True)
-
-            if not hoja:
-                hoja = db.query('''
-                    SELECT hc.id FROM hojas_calculo hc
-                    JOIN permisos p ON hc.id = p.hoja_id
-                    WHERE p.usuario_id = ? AND hc.nombre = ?
-                ''', (usuario_id, nombre_hoja), one=True)
-
-        if hoja:
-            return {"status": "ok", "hoja_id": hoja[0]}
-        else:
-            return {"status": "error", "mensaje": "No se encontro la hoja"}
-
     def editar_celda(self, mensaje, conn):
         hoja_id = mensaje.get("hoja_id")
         self.servidor.cola_ediciones.agregar_edicion(mensaje)

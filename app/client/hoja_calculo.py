@@ -69,7 +69,7 @@ class HojaCalculo:
     def seleccionar_hoja(self):
         hoja_seleccionada = self._seleccionar_hoja("Selecciona el id de hoja: ")
         if hoja_seleccionada:
-            hoja_id = self.obtener_hoja_id(hoja_seleccionada[1])
+            hoja_id = hoja_seleccionada[0]
             if hoja_id:
                 self.editar_o_ver_hoja(hoja_id)
 
@@ -130,7 +130,7 @@ class HojaCalculo:
     def compartir_hoja(self):
         hoja_seleccionada = self._seleccionar_hoja("Selecciona el id de hoja para compartir: ")
         if hoja_seleccionada:
-            hoja_id = self.obtener_hoja_id(hoja_seleccionada[1])
+            hoja_id = hoja_seleccionada[0]
             permisos_respuesta = self.obtener_permisos_usuario(hoja_id)
 
             if permisos_respuesta.get("status") != "ok":
@@ -149,7 +149,7 @@ class HojaCalculo:
     def descargar_hoja(self):
         hoja_seleccionada = self._seleccionar_hoja("Selecciona el id de hoja para descargar: ")
         if hoja_seleccionada:
-            hoja_id = self.obtener_hoja_id(hoja_seleccionada[1])
+            hoja_id = hoja_seleccionada[0]
             if hoja_id:
                 mensaje = {"accion": "descargar_hoja", "hoja_id": hoja_id}
                 respuesta = self._enviar_mensaje(mensaje)
@@ -172,7 +172,7 @@ class HojaCalculo:
     def eliminar_hoja(self):
         hoja_seleccionada = self._seleccionar_hoja("Selecciona el id de hoja para eliminar: ")
         if hoja_seleccionada:
-            hoja_id = self.obtener_hoja_id(hoja_seleccionada[1])
+            hoja_id = hoja_seleccionada[0]
             permisos_respuesta = self.obtener_permisos_usuario(hoja_id)
 
             if permisos_respuesta.get("status") != "ok":
@@ -184,11 +184,6 @@ class HojaCalculo:
                 print("Hoja eliminada correctamente")
             else:
                 print("No tienes permisos suficientes para eliminar esta hoja")
-
-    def obtener_hoja_id(self, nombre):
-        mensaje = {"accion": "obtener_hoja_id", "nombre": nombre, "usuario_id": self.sesion.usuario_id}
-        respuesta = self._enviar_mensaje(mensaje)
-        return respuesta.get("hoja_id")
 
     def obtener_permisos_usuario(self, hoja_id):
         mensaje = {"accion": "obtener_permisos", "hoja_id": hoja_id, "usuario_id": self.sesion.usuario_id}

@@ -13,7 +13,6 @@ ACCIONES = {
     "iniciar_sesion": "iniciar_sesion",
     "crear_hoja": "crear_hoja",
     "listar_hojas": "listar_hojas",
-    "obtener_hoja_id": "obtener_hoja_id",
     "obtener_permisos": "obtener_permisos",
     "leer_datos_csv": "leer_datos_csv",
     "editar_celda": "editar_celda",
@@ -147,8 +146,6 @@ class Servidor:
                 return self.gestor_hojas.crear_hoja(mensaje)
             elif accion == ACCIONES["listar_hojas"]:
                 return self.gestor_hojas.listar_hojas(mensaje, conn)
-            elif accion == ACCIONES["obtener_hoja_id"]:
-                return self.gestor_hojas.obtener_hoja_id(mensaje)
             elif accion == ACCIONES["obtener_permisos"]:
                 return self.gestor_hojas.obtener_permisos_usuario(mensaje)
             elif accion == ACCIONES["leer_datos_csv"]:
